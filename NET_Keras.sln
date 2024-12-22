@@ -1,0 +1,41 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.10.35122.118
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NET_Keras-CMD", "NET_Keras\NET_Keras-CMD.csproj", "{76792B2A-076A-42A3-96A9-AC50F482D395}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NeuralNetwork", "NeuralNetwork\NeuralNetwork.csproj", "{4B2404CB-64B5-4F05-B194-504127EF9719}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{76792B2A-076A-42A3-96A9-AC50F482D395}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{76792B2A-076A-42A3-96A9-AC50F482D395}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{76792B2A-076A-42A3-96A9-AC50F482D395}.Debug|x64.ActiveCfg = Debug|x64
+		{76792B2A-076A-42A3-96A9-AC50F482D395}.Debug|x64.Build.0 = Debug|x64
+		{76792B2A-076A-42A3-96A9-AC50F482D395}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{76792B2A-076A-42A3-96A9-AC50F482D395}.Release|Any CPU.Build.0 = Release|Any CPU
+		{76792B2A-076A-42A3-96A9-AC50F482D395}.Release|x64.ActiveCfg = Release|x64
+		{76792B2A-076A-42A3-96A9-AC50F482D395}.Release|x64.Build.0 = Release|x64
+		{4B2404CB-64B5-4F05-B194-504127EF9719}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4B2404CB-64B5-4F05-B194-504127EF9719}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4B2404CB-64B5-4F05-B194-504127EF9719}.Debug|x64.ActiveCfg = Debug|x64
+		{4B2404CB-64B5-4F05-B194-504127EF9719}.Debug|x64.Build.0 = Debug|x64
+		{4B2404CB-64B5-4F05-B194-504127EF9719}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4B2404CB-64B5-4F05-B194-504127EF9719}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4B2404CB-64B5-4F05-B194-504127EF9719}.Release|x64.ActiveCfg = Release|x64
+		{4B2404CB-64B5-4F05-B194-504127EF9719}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {3A65CEEF-DAB9-4319-8B80-FA584EF69236}
+	EndGlobalSection
+EndGlobal
