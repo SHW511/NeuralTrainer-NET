@@ -44,5 +44,10 @@ namespace NeuralNetwork.Optimizers
                 }
             }
         }
+
+        public override void Update4D(List<float[,,,]> weights, List<float[,,,]> gradients)
+        {
+            throw new NotImplementedException();
+        }
     }
 }

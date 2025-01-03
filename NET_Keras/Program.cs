@@ -10,6 +10,9 @@ using NeuralNetwork.Inference;
 using NeuralNetwork.Processing.Text;
 using System.Diagnostics;
 using ManagedCuda;
+using Newtonsoft.Json;
+using System.Drawing;
+using System.Formats.Asn1;
 
 namespace NET_Keras
 {
@@ -64,9 +67,6 @@ namespace NET_Keras
         {
             string text = File.ReadAllText("training_text.txt");
 
-            // Sample text data
-            //string text = "This is a sample text for training the text generator model. This text is used to demonstrate the text generation.";
-
             // Tokenize the text
             var vocab = TextPreProcessing.Tokenize(text);
             var reverseVocab = vocab.ToDictionary(kv => kv.Value, kv => kv.Key);
@@ -75,15 +75,15 @@ namespace NET_Keras
             var sequences = TextPreProcessing.TextToSequences(text, vocab);
 
             // Define the maximum sequence length
-            int maxLen = 50;
+            int maxLen = 150;
             sequences = TextPreProcessing.PadSequences(sequences, maxLen);
 
             // Create a Sequential model
             var model = new Sequential();
 
             // Add layers to the model
-            model.Add(new EmbeddingCuda(vocab.Count, 50)); // Embedding layer
-            model.Add(new LSTM(50)); // LSTM layer
+            model.Add(new EmbeddingCuda(vocab.Count, 50));
+            model.Add(new GRUCuda(50));
             model.Add(new DenseCuda(vocab.Count, activation: ActivationsCuda.SoftMax)); // Output layer
 
             Console.WriteLine("Layers added.");
@@ -111,24 +111,6 @@ namespace NET_Keras
 
             Console.WriteLine("Starting training...");
 
-            #region Training code
-            //Train the model in parallel
-            //Parallel.For(0, 10000, (i) =>
-            //{
-            //    float loss = model.TrainOnBatch(xTrain, yTrain);
-            //    Console.WriteLine($"Epoch {i}, Loss: {loss}");
-            //});
-
-            //Wait for the ThreadPool to finish
-            //while (ThreadPool.PendingWorkItemCount > 0)
-            //{
-            //    //Every second, report the number of pending work items
-            //    Console.WriteLine($"Pending work items: {ThreadPool.PendingWorkItemCount}");
-
-            //    Thread.Sleep(1000);
-            //} 
-            #endregion
-
             var lrScheduler = new LearningRateScheduler(0.001f, 0.96f, 1000);
 
             using (var context = new CudaContext())
@@ -140,30 +122,148 @@ namespace NET_Keras
                 yTrainDevice.CopyToDevice(yTrain);
 
                 // Train the model
-                var stopwatch = new Stopwatch();
-                stopwatch.Start();
-                for (int epoch = 0; epoch < 100; epoch++)
-                {
-                    optimizer.learningRate = lrScheduler.GetLearningRate(epoch);
-                    float loss = model.TrainOnBatch(xTrain, yTrain);
+                //var stopwatch = new Stopwatch();
+                //stopwatch.Start();
 
-                    stopwatch.Stop();
-                    Console.WriteLine($"Epoch {epoch}, Loss: {loss} Training time: {stopwatch.Elapsed}");
-                    stopwatch.Restart();
-                }
+                int batchSize = 64;
+                int epochs = 50;
+                model.Fit(xTrain, yTrain, epochs, batchSize);
 
-                stopwatch.Stop();
+                //for (int epoch = 0; epoch < 200; epoch++)
+                //{
+                //    optimizer.learningRate = lrScheduler.GetLearningRate(epoch);
+                //    float loss = model.TrainOnBatch(xTrain, yTrain);
+
+                //    stopwatch.Stop();
+                //    Console.WriteLine($"Epoch {epoch}, Loss: {loss} Training time: {stopwatch.Elapsed}");
+                //    stopwatch.Restart();
+                //}
+
+                //stopwatch.Stop();
             }
             // Create a TextGenerator instance
             var textGenerator = new TextGenerator(model, reverseVocab, maxLen);
 
             // Generate text
-            string seedText = "This is";
-            int numWords = 10;
+            string seedText = "This is a hole";
+            int numWords = 50;
             string generatedText = textGenerator.GenerateText(seedText, numWords);
 
             // Print the generated text
             Console.WriteLine($"Generated Text: {generatedText}");
+        }
+
+        public static void TryImageTraining()
+        {
+            var (xTrain, yTrain) = LoadImageData("C:\\Users\\SvenW\\source\\repos\\NET_Keras\\NET_Keras\\imgs\\training\\", "500selection.txt");
+
+            var model = new Sequential();
+            model.Add(new Conv2D(32, 3, padding: 1));
+            model.Add(new MaxPool2D(2));
+            model.Add(new Conv2D(64, 3, padding: 1));
+            model.Add(new MaxPool2D(2));
+            model.Add(new Dense(128, activation: Activations.ReLU));
+            model.Add(new Dense(10, activation: Activations.SoftMax));
+
+            var lossFunction = new CategoricalCrossentropy();
+            var optimizer = new Adam(0.001f);
+
+            model.Compile(lossFunction, optimizer);
+
+            model.Build(new int[] { -1, 28, 28, 1 });
+
+            Console.WriteLine("Model built.");
+            Console.WriteLine("Training...");
+
+            for (int epoch = 0; epoch < 10; epoch++)
+            {
+                float loss = model.TrainOnBatch4D(xTrain, yTrain);
+                Console.WriteLine($"Epoch {epoch}, Loss: {loss}");
+            }
+        }
+
+        private static (float[,,,] xTrain, float[,] yTrain) LoadImageData(string imageFolderPath, string csvFilePath)
+        {
+            var images = new List<float[,,]>();
+            var labels = new List<int>();
+
+            using (var reader = new StreamReader(csvFilePath))
+            {
+                string line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    var fields = line.Split('\t');
+                    var id = fields[0];
+                    var jsonString = fields[2];
+
+                    // Load the image
+                    var imagePath = Path.Combine(imageFolderPath, id + ".png");
+                    var image = LoadAndPreprocessImage(imagePath);
+
+                    // Parse the label from the JSON string
+                    var label = ParseLabelFromJson(jsonString);
+
+                    images.Add(image);
+                    labels.Add(label);
+                }
+            }
+
+            // Convert lists to arrays
+            var xTrain = new float[images.Count, 28, 28, 1];
+            for (int i = 0; i < images.Count; i++)
+            {
+                for (int j = 0; j < 28; j++)
+                {
+                    for (int k = 0; k < 28; k++)
+                    {
+                        xTrain[i, j, k, 0] = images[i][j, k, 0];
+                    }
+                }
+            }
+
+            var yTrain = OneHotEncodeLabels(labels, 10); // Assuming 10 classes
+
+            return (xTrain, yTrain);
+        }
+
+        private static float[,,] LoadAndPreprocessImage(string imagePath)
+        {
+            using (var bitmap = new Bitmap(imagePath))
+            {
+                // Resize the image to 28x28
+                var resizedBitmap = new Bitmap(bitmap, new Size(28, 28));
+
+                // Convert the image to grayscale and normalize pixel values
+                var image = new float[28, 28, 1];
+                for (int i = 0; i < 28; i++)
+                {
+                    for (int j = 0; j < 28; j++)
+                    {
+                        var pixel = resizedBitmap.GetPixel(i, j);
+                        var gray = (pixel.R + pixel.G + pixel.B) / 3.0f / 255.0f;
+                        image[i, j, 0] = gray;
+                    }
+                }
+
+                return image;
+            }
+        }
+
+        private static int ParseLabelFromJson(string jsonString)
+        {
+            // Assuming the JSON string contains a field "label" with the class index
+            dynamic json = JsonConvert.DeserializeObject(jsonString);
+            return (int)json.label;
+        }
+
+        private static float[,] OneHotEncodeLabels(List<int> labels, int numClasses)
+        {
+            var yTrain = new float[labels.Count, numClasses];
+            for (int i = 0; i < labels.Count; i++)
+            {
+                yTrain[i, labels[i]] = 1.0f;
+            }
+            return yTrain;
         }
     }
 

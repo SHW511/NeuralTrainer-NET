@@ -25,5 +25,23 @@ namespace NeuralNetwork.Losses
 
             return -loss / samples;
         }
+
+        public override float Calculate4D(float[,,,] predicted, float[,] actual)
+        {
+            float loss = 0.0f;
+            int samples = actual.GetLength(0);
+            int classes = actual.GetLength(1);
+
+            for (int i = 0; i < samples; i++)
+            {
+                for (int j = 0; j < classes; j++)
+                {
+                    float p = Math.Max(predicted[i, 0, 0, j], float.Epsilon); // Ensure predicted value is not zero
+                    loss += actual[i, j] * (float)Math.Log(p);
+                }
+            }
+
+            return -loss / samples;
+        }
     }
 }

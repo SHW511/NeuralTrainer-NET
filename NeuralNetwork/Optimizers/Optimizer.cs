@@ -9,5 +9,7 @@ namespace NeuralNetwork.Optimizers
     public abstract class Optimizer
     {
         public abstract void Update(List<float[,]> weights, List<float[,]> gradients);
+        public abstract void Update4D(List<float[,,,]> weights, List<float[,,,]> gradients);
+
     }
 }

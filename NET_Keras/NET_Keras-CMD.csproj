@@ -1,5 +1,4 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
@@ -8,21 +7,19 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
-
   <ItemGroup>
     <PackageReference Include="ManagedCuda" Version="10.0.0" />
+    <PackageReference Include="Microsoft.ML.TimeSeries" Version="4.0.0" />
     <PackageReference Include="Microsoft.Win32.SystemEvents" Version="9.0.0" />
+    <PackageReference Include="System.Data.SqlClient" Version="4.9.0" />
     <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
   </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\NeuralNetwork\NeuralNetwork.csproj" />
   </ItemGroup>
-
   <ItemGroup>
     <None Update="training_text.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
-
 </Project>

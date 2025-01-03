@@ -58,6 +58,11 @@ namespace NeuralNetwork.Layers.Cuda
             return null;
         }
 
+        public override float[,,,] Backward(float[,,,] gradient)
+        {
+            throw new NotImplementedException();
+        }
+
         public override void Build(int[] inputShape)
         {
             embeddings = Initializers.Initializers.GlorotUniform(InputDim, OutputDim);
@@ -102,6 +107,11 @@ namespace NeuralNetwork.Layers.Cuda
             outputDevice.Dispose();
 
             return output;
+        }
+
+        public override float[,,,] Call(float[,,,] inputs)
+        {
+            throw new NotImplementedException();
         }
 
         public override int[] GetOutputShape(int[] inputShape)

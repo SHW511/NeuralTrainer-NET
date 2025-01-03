@@ -176,5 +176,15 @@ namespace NeuralNetwork.Layers
             }
             return config;
         }
+
+        public override float[,,,] Call(float[,,,] inputs)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override float[,,,] Backward(float[,,,] gradient)
+        {
+            throw new NotImplementedException();
+        }
     }
 }

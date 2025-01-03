@@ -250,5 +250,15 @@ namespace NeuralNetwork.Layers
         {
             return new int[] { inputShape[0], Units };
         }
+
+        public override float[,,,] Call(float[,,,] inputs)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override float[,,,] Backward(float[,,,] gradient)
+        {
+            throw new NotImplementedException();
+        }
     }
 }

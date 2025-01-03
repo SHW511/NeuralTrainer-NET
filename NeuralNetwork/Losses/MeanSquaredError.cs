@@ -24,5 +24,10 @@ namespace NeuralNetwork.Losses
             }
             return loss / (rows * cols);
         }
+
+        public override float Calculate4D(float[,,,] predicted, float[,] actual)
+        {
+            throw new NotImplementedException();
+        }
     }
 }

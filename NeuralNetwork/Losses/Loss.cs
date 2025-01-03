@@ -9,5 +9,7 @@ namespace NeuralNetwork.Losses
     public abstract class Loss
     {
         public abstract float Calculate(float[,] predicted, float[,] actual);
+        public abstract float Calculate4D(float[,,,] predicted, float[,] actual);
+
     }
 }

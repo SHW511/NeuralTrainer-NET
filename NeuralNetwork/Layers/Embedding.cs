@@ -49,6 +49,11 @@ namespace NeuralNetwork.Layers
             return null; // Embedding layer does not propagate gradients to previous layers
         }
 
+        public override float[,,,] Backward(float[,,,] gradient)
+        {
+            throw new NotImplementedException();
+        }
+
         public override void Build(int[] inputShape)
         {
             embeddings = Initializers.Initializers.GlorotUniform(InputDim, OutputDim);
@@ -75,6 +80,11 @@ namespace NeuralNetwork.Layers
                 }
             }
             return output;
+        }
+
+        public override float[,,,] Call(float[,,,] inputs)
+        {
+            throw new NotImplementedException();
         }
 
         public override int[] GetOutputShape(int[] inputShape)

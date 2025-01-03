@@ -23,6 +23,12 @@
     <None Update="CU\EmbeddingKernel.ptx">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="CU\GRUKernel.cu">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
+    <None Update="CU\GRUKernel.ptx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="CU\LSTMKernel.ptx">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

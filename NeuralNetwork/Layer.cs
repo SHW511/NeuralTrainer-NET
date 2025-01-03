@@ -15,6 +15,8 @@ namespace NeuralNetwork
 
         public abstract void Build(int[] inputShape);
         public abstract float[,] Call(float[,] inputs);
+        public abstract float[,,,] Call(float[,,,] inputs);
+
         public abstract int[] GetOutputShape(int[] inputShape);
         public virtual Dictionary<string, object> GetConfig()
         {
@@ -22,5 +24,7 @@ namespace NeuralNetwork
         }
 
         public abstract float[,] Backward(float[,] gradient);
+        public abstract float[,,,] Backward(float[,,,] gradient);
+
     }
 }

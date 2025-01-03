@@ -361,3 +361,6 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+NET_Keras/imgs/*
+/NET_Keras/500selection.txt

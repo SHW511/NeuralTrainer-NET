@@ -4,12 +4,12 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using ManagedCuda;
 using ManagedCuda.VectorTypes;
+using ManagedCuda;
 
 namespace NeuralNetwork.Layers.Cuda
 {
-    public class LSTMCuda : Layer
+    public class GRUCuda : Layer
     {
         public int Units { get; private set; }
 
@@ -22,7 +22,7 @@ namespace NeuralNetwork.Layers.Cuda
         private CudaDeviceVariable<float> uDevice;
         private CudaDeviceVariable<float> bDevice;
 
-        public LSTMCuda(int units)
+        public GRUCuda(int units)
         {
             Units = units;
             _w = new float[0, 0]; // Initialize to avoid non-nullable warnings
@@ -34,10 +34,10 @@ namespace NeuralNetwork.Layers.Cuda
         public override void Build(int[] inputShape)
         {
             int inputDim = inputShape[1];
-            _w = Initializers.Initializers.GlorotUniform(inputDim, Units * 4);
-            _u = Initializers.Initializers.GlorotUniform(Units, Units * 4);
+            _w = Initializers.Initializers.GlorotUniform(inputDim, Units * 3);
+            _u = Initializers.Initializers.GlorotUniform(Units, Units * 3);
 
-            b = new float[Units * 4];
+            b = new float[Units * 3];
 
             wDevice = new CudaDeviceVariable<float>(_w.Length);
             uDevice = new CudaDeviceVariable<float>(_u.Length);
@@ -56,24 +56,21 @@ namespace NeuralNetwork.Layers.Cuda
             int inputDim = inputs.GetLength(1);
 
             float[,] h = new float[timesteps, Units];
-            float[] c = new float[Units]; // Cell state
             float[] h_t = new float[Units]; // Hidden state
 
             // Allocate memory on the GPU
             var inputsDevice = new CudaDeviceVariable<float>(inputs.Length);
             var hDevice = new CudaDeviceVariable<float>(h.Length);
-            var cDevice = new CudaDeviceVariable<float>(c.Length);
             var h_tDevice = new CudaDeviceVariable<float>(h_t.Length);
 
             // Copy data to the GPU
             inputsDevice.CopyToDevice(inputs);
-            cDevice.CopyToDevice(c);
             h_tDevice.CopyToDevice(h_t);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "LSTMKernel.ptx");
+            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "GRUKernel.ptx");
 
             // Load the kernel from the .cu file
-            var kernel = context.LoadKernel(path, "LSTMForward");
+            var kernel = context.LoadKernel(path, "GRUForward");
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(Units);
@@ -84,12 +81,12 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.BlockDimensions = blockSize;
 
             // Ensure memory allocation is successful
-            if (inputsDevice.Size != inputs.Length || hDevice.Size != h.Length || cDevice.Size != c.Length || h_tDevice.Size != h_t.Length)
+            if (inputsDevice.Size != inputs.Length || hDevice.Size != h.Length || h_tDevice.Size != h_t.Length)
             {
                 throw new InvalidOperationException("Memory allocation failed.");
             }
 
-            kernel.Run(inputsDevice.DevicePointer, wDevice.DevicePointer, uDevice.DevicePointer, bDevice.DevicePointer, hDevice.DevicePointer, cDevice.DevicePointer, h_tDevice.DevicePointer, timesteps, inputDim, Units);
+            kernel.Run(inputsDevice.DevicePointer, wDevice.DevicePointer, uDevice.DevicePointer, bDevice.DevicePointer, hDevice.DevicePointer, h_tDevice.DevicePointer, timesteps, inputDim, Units);
 
             // Copy the result back to the CPU
             hDevice.CopyToHost(h);
@@ -97,7 +94,6 @@ namespace NeuralNetwork.Layers.Cuda
             // Free GPU memory
             inputsDevice.Dispose();
             hDevice.Dispose();
-            cDevice.Dispose();
             h_tDevice.Dispose();
 
             return h;
@@ -108,9 +104,9 @@ namespace NeuralNetwork.Layers.Cuda
             int timesteps = gradient.GetLength(0);
             int inputDim = _w.GetLength(0);
 
-            float[,] dW = new float[inputDim, Units * 4];
-            float[,] dU = new float[Units, Units * 4];
-            float[] db = new float[Units * 4];
+            float[,] dW = new float[inputDim, Units * 3];
+            float[,] dU = new float[Units, Units * 3];
+            float[] db = new float[Units * 3];
             float[,] dX = new float[timesteps, inputDim];
 
             // Allocate memory on the GPU
@@ -123,10 +119,10 @@ namespace NeuralNetwork.Layers.Cuda
             // Copy data to the GPU
             gradientDevice.CopyToDevice(gradient);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "LSTMKernel.ptx");
+            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "GRUKernel.ptx");
 
             // Load the kernel from the .cu file
-            var kernel = context.LoadKernel(path, "LSTMBackward");
+            var kernel = context.LoadKernel(path, "GRUBackward");
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(Units);
@@ -176,3 +172,4 @@ namespace NeuralNetwork.Layers.Cuda
         }
     }
 }
+
