@@ -65,15 +65,27 @@ namespace NeuralNetwork.Layers.Cuda
             var cDevice = new CudaDeviceVariable<float>(c.Length);
             var h_tDevice = new CudaDeviceVariable<float>(h_t.Length);
 
+            // Allocate memory for gates on the GPU
+            var f_tDevice = new CudaDeviceVariable<float>(Units);
+            var i_tDevice = new CudaDeviceVariable<float>(Units);
+            var c_tildeDevice = new CudaDeviceVariable<float>(Units);
+            var o_tDevice = new CudaDeviceVariable<float>(Units);
+
             // Copy data to the GPU
             inputsDevice.CopyToDevice(inputs);
             cDevice.CopyToDevice(c);
             h_tDevice.CopyToDevice(h_t);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "LSTMKernel.ptx");
+            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "LSTMKernelV2.ptx");
+
+            CudaLinker linker = new CudaLinker();
+            linker.AddFile(path, ManagedCuda.BasicTypes.CUJITInputType.PTX, null);
+            linker.AddFile(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\lib\x64\cudadevrt.lib", ManagedCuda.BasicTypes.CUJITInputType.Library, null);
+            var linkerImage = linker.Complete();
+            linker.Dispose();
 
             // Load the kernel from the .cu file
-            var kernel = context.LoadKernel(path, "LSTMForward");
+            var kernel = context.LoadKernelPTX(linkerImage, "lstm_forward");
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(Units);
@@ -89,7 +101,8 @@ namespace NeuralNetwork.Layers.Cuda
                 throw new InvalidOperationException("Memory allocation failed.");
             }
 
-            kernel.Run(inputsDevice.DevicePointer, wDevice.DevicePointer, uDevice.DevicePointer, bDevice.DevicePointer, hDevice.DevicePointer, cDevice.DevicePointer, h_tDevice.DevicePointer, timesteps, inputDim, Units);
+            kernel.Run(wDevice.DevicePointer, uDevice.DevicePointer, inputsDevice.DevicePointer, h_tDevice.DevicePointer, cDevice.DevicePointer, bDevice.DevicePointer,
+                       f_tDevice.DevicePointer, i_tDevice.DevicePointer, c_tildeDevice.DevicePointer, o_tDevice.DevicePointer, cDevice.DevicePointer, hDevice.DevicePointer, inputDim, Units);
 
             // Copy the result back to the CPU
             hDevice.CopyToHost(h);
@@ -99,6 +112,10 @@ namespace NeuralNetwork.Layers.Cuda
             hDevice.Dispose();
             cDevice.Dispose();
             h_tDevice.Dispose();
+            f_tDevice.Dispose();
+            i_tDevice.Dispose();
+            c_tildeDevice.Dispose();
+            o_tDevice.Dispose();
 
             return h;
         }

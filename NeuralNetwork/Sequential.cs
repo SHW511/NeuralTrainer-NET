@@ -63,8 +63,13 @@ namespace NeuralNetwork
             }
 
             int numSamples = x.GetLength(0);
+
+            Stopwatch stopwatch = new Stopwatch();
+
             for (int epoch = 0; epoch < epochs; epoch++)
             {
+                stopwatch.Restart();
+
                 float epochLoss = 0.0f;
                 for (int i = 0; i < numSamples; i += batchSize)
                 {
@@ -72,10 +77,11 @@ namespace NeuralNetwork
                     float[,] xBatch = GetBatch(x, i, batchEnd);
                     float[,] yBatch = GetBatch(y, i, batchEnd);
                     epochLoss += TrainOnBatch(xBatch, yBatch);
+                    stopwatch.Stop();
                 }
                 if (epoch % reportInterval == 0)
                 {
-                    Console.WriteLine($"Epoch {epoch + 1}/{epochs}, Loss: {epochLoss / (numSamples / batchSize)}");
+                    Console.WriteLine($"Epoch {epoch + 1}/{epochs}, Loss: {epochLoss / (numSamples / batchSize)}, Time: {stopwatch.Elapsed}");
                 }
             }
         }

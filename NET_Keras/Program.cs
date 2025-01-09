@@ -45,15 +45,7 @@ namespace NET_Keras
             float[,] xTrain = new float[,] { { 1.0f, 2.0f }, { 3.0f, 4.0f }, { 5.0f, 6.0f }, { 7.0f, 8.0f } };
             float[,] yTrain = new float[,] { { 3.0f }, { 7.0f }, { 11.0f }, { 15.0f } };
 
-            // Train the model
-            for (int epoch = 0; epoch < 25; epoch++)
-            {
-                float loss = model.TrainOnBatch(xTrain, yTrain);
-                if (epoch % 100 == 0)
-                {
-                    Console.WriteLine($"Epoch {epoch}, Loss: {loss}");
-                }
-            }
+            model.Fit(xTrain, yTrain, 10, 16, 1);
 
             // Predict
             float[,] xTest = new float[,] { { 9.0f, 10.0f } };
@@ -75,15 +67,17 @@ namespace NET_Keras
             var sequences = TextPreProcessing.TextToSequences(text, vocab);
 
             // Define the maximum sequence length
-            int maxLen = 150;
+            int maxLen = 50;
             sequences = TextPreProcessing.PadSequences(sequences, maxLen);
 
             // Create a Sequential model
             var model = new Sequential();
 
             // Add layers to the model
-            model.Add(new EmbeddingCuda(vocab.Count, 50));
-            model.Add(new GRUCuda(50));
+            model.Add(new EmbeddingCuda(vocab.Count, 30));
+            model.Add(new LSTMCuda(30));
+            //model.Add(new DenseCuda(30, activation: ActivationsCuda.ReLU));
+            model.Add(new LSTMCuda(30));
             model.Add(new DenseCuda(vocab.Count, activation: ActivationsCuda.SoftMax)); // Output layer
 
             Console.WriteLine("Layers added.");
@@ -115,31 +109,9 @@ namespace NET_Keras
 
             using (var context = new CudaContext())
             {
-                var xTrainDevice = new CudaDeviceVariable<float>(xTrain.Length);
-                var yTrainDevice = new CudaDeviceVariable<float>(yTrain.Length);
-
-                xTrainDevice.CopyToDevice(xTrain);
-                yTrainDevice.CopyToDevice(yTrain);
-
-                // Train the model
-                //var stopwatch = new Stopwatch();
-                //stopwatch.Start();
-
-                int batchSize = 64;
-                int epochs = 50;
-                model.Fit(xTrain, yTrain, epochs, batchSize);
-
-                //for (int epoch = 0; epoch < 200; epoch++)
-                //{
-                //    optimizer.learningRate = lrScheduler.GetLearningRate(epoch);
-                //    float loss = model.TrainOnBatch(xTrain, yTrain);
-
-                //    stopwatch.Stop();
-                //    Console.WriteLine($"Epoch {epoch}, Loss: {loss} Training time: {stopwatch.Elapsed}");
-                //    stopwatch.Restart();
-                //}
-
-                //stopwatch.Stop();
+                int batchSize = 128;
+                int epochs = 5;
+                model.Fit(xTrain, yTrain, epochs, batchSize, 1);
             }
             // Create a TextGenerator instance
             var textGenerator = new TextGenerator(model, reverseVocab, maxLen);
