@@ -2,39 +2,55 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.Serialization;
 using System.Text;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using NeuralNetwork.Losses;
 using NeuralNetwork.Optimizers;
 
 namespace NeuralNetwork
 {
-    public class Sequential
+    [Serializable]
+    public class Sequential : ISerializable
     {
         private List<Layer> layers;
         private bool built;
         private Loss? lossFunction; // Marked as nullable
         private Optimizer? optimizer; // Marked as nullable
 
+        public List<Layer> Layers { get => layers; set => layers = value; }
+        public bool Built { get => built; set => built = value; }
+        public Loss LossFunction { get => lossFunction; set => lossFunction = value; }
+        public Optimizer Optimizer { get => optimizer; set => optimizer = value; }
+
         public Sequential()
         {
-            layers = new List<Layer>();
-            built = false;
-            lossFunction = null; // Initialize to null
-            optimizer = null; // Initialize to null
+            Layers = new List<Layer>();
+            Built = false;
+            LossFunction = null; // Initialize to null
+            Optimizer = null; // Initialize to null
+        }
+
+        protected Sequential(SerializationInfo info, StreamingContext context)
+        {
+            Layers = (List<Layer>)info.GetValue("Layers", typeof(List<Layer>));
+            Built = info.GetBoolean("Built");
+            LossFunction = (Loss)info.GetValue("LossFunction", typeof(Loss));
+            Optimizer = (Optimizer)info.GetValue("Optimizer", typeof(Optimizer));
         }
 
         public void Add(Layer layer)
         {
-            layers.Add(layer);
-            if (!built)
+            Layers.Add(layer);
+            if (!Built)
             {
-                layer.Build(new int[] { -1, layer.InputDim });
-                built = true;
+                layer.Build(new int[] { 0, layer.InputDim });
+                Built = true;
             }
             else
             {
-                var prevLayerOutputShape = layers[layers.Count - 2].GetOutputShape(new int[] { -1, layers[layers.Count - 2].OutputDim });
+                var prevLayerOutputShape = Layers[Layers.Count - 2].GetOutputShape(new int[] { -1, Layers[Layers.Count - 2].OutputDim });
                 layer.Build(prevLayerOutputShape);
             }
         }
@@ -42,7 +58,7 @@ namespace NeuralNetwork
         public void Build(int[] inputShape)
         {
             int[] shape = inputShape;
-            foreach (var layer in layers)
+            foreach (var layer in Layers)
             {
                 layer.Build(shape);
                 shape = layer.GetOutputShape(shape);
@@ -51,13 +67,13 @@ namespace NeuralNetwork
 
         public void Compile(Loss lossFunction, Optimizer optimizer)
         {
-            this.lossFunction = lossFunction;
-            this.optimizer = optimizer;
+            this.LossFunction = lossFunction;
+            this.Optimizer = optimizer;
         }
 
         public void Fit(float[,] x, float[,] y, int epochs = 1, int batchSize = 32, int reportInterval = 10)
         {
-            if (lossFunction == null || optimizer == null)
+            if (LossFunction == null || Optimizer == null)
             {
                 throw new InvalidOperationException("The model must be compiled before fitting.");
             }
@@ -88,7 +104,7 @@ namespace NeuralNetwork
 
         public void Fit4D(float[,,,] x, float[,] y, int epochs = 1, int batchSize = 32, int reportInterval = 10)
         {
-            if (lossFunction == null || optimizer == null)
+            if (LossFunction == null || Optimizer == null)
             {
                 throw new InvalidOperationException("The model must be compiled before fitting.");
             }
@@ -149,7 +165,7 @@ namespace NeuralNetwork
 
         public float TrainOnBatch(float[,] x, float[,] y)
         {
-            if (lossFunction == null || optimizer == null)
+            if (LossFunction == null || Optimizer == null)
             {
                 throw new InvalidOperationException("The model must be compiled before training.");
             }
@@ -158,21 +174,21 @@ namespace NeuralNetwork
             List<float[,]> activations = new List<float[,]>();
 
             // Forward pass
-            foreach (var layer in layers)
+            foreach (var layer in Layers)
             {
                 output = layer.Call(output);
                 activations.Add(output);
             }
 
-            float lossValue = lossFunction.Calculate(y, output);
+            float lossValue = LossFunction.Calculate(y, output);
 
             // Backward pass
             List<float[,]> gradients = new List<float[,]>();
             float[,] dLoss = ComputeLossGradient(y, output);
 
-            for (int i = layers.Count - 1; i >= 0; i--)
+            for (int i = Layers.Count - 1; i >= 0; i--)
             {
-                var layer = layers[i];
+                var layer = Layers[i];
                 dLoss = layer.Backward(dLoss);
                 gradients.Add(dLoss);
             }
@@ -196,15 +212,15 @@ namespace NeuralNetwork
             }
 
             // Update weights
-            List<float[,]> weights = layers.Select(l => l.Weights).ToList();
-            optimizer.Update(weights, gradients);
+            List<float[,]> weights = Layers.Select(l => l.Weights).ToList();
+            Optimizer.Update(weights, gradients);
 
             return lossValue;
         }
 
         public float TrainOnBatch4D(float[,,,] x, float[,] y)
         {
-            if (lossFunction == null || optimizer == null)
+            if (LossFunction == null || Optimizer == null)
             {
                 throw new InvalidOperationException("The model must be compiled before training.");
             }
@@ -213,21 +229,21 @@ namespace NeuralNetwork
             List<float[,,,]> activations = new List<float[,,,]>();
 
             // Forward pass
-            foreach (var layer in layers)
+            foreach (var layer in Layers)
             {
                 output = layer.Call(output);
                 activations.Add(output);
             }
 
-            float lossValue = lossFunction.Calculate4D(output, y);
+            float lossValue = LossFunction.Calculate4D(output, y);
 
             // Backward pass
             List<float[,,,]> gradients = new List<float[,,,]>();
             float[,,,] dLoss = ComputeLossGradient4D(y, output);
 
-            for (int i = layers.Count - 1; i >= 0; i--)
+            for (int i = Layers.Count - 1; i >= 0; i--)
             {
-                var layer = layers[i];
+                var layer = Layers[i];
                 dLoss = layer.Backward(dLoss);
                 gradients.Add(dLoss);
             }
@@ -257,8 +273,8 @@ namespace NeuralNetwork
             }
 
             // Update weights
-            List<float[,,,]> weights = layers.Select(l => l.Weights).Cast<float[,,,]>().ToList();
-            optimizer.Update4D(weights, gradients);
+            List<float[,,,]> weights = Layers.Select(l => l.Weights).Cast<float[,,,]>().ToList();
+            Optimizer.Update4D(weights, gradients);
 
             return lossValue;
         }
@@ -306,7 +322,7 @@ namespace NeuralNetwork
         public float[,] Predict(float[,] x)
         {
             float[,] output = x;
-            foreach (var layer in layers)
+            foreach (var layer in Layers)
             {
                 output = layer.Call(output);
             }
@@ -316,11 +332,19 @@ namespace NeuralNetwork
         public float[,,,] Predict4D(float[,,,] x)
         {
             float[,,,] output = x;
-            foreach (var layer in layers)
+            foreach (var layer in Layers)
             {
                 output = layer.Call(output);
             }
             return output;
+        }
+
+        public void GetObjectData(SerializationInfo info, StreamingContext context)
+        {
+            info.AddValue("Layers", Layers);
+            info.AddValue("Built", Built);
+            info.AddValue("LossFunction", LossFunction);
+            info.AddValue("Optimizer", Optimizer);
         }
     }
 }

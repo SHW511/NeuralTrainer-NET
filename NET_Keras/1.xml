@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Sequential xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Layers>
+    <Layer>
+      <Built>True</Built>
+      <InputDim>0</InputDim>
+      <OutputDim>0</OutputDim>
+      <InputShape>
+        <Dim>4</Dim>
+        <Dim>2</Dim>
+      </InputShape>
+      <Weights>
+        <Row>
+          <Col>1.5248395</Col>
+        </Row>
+        <Row>
+          <Col>0.47869983</Col>
+        </Row>
+      </Weights>
+    </Layer>
+  </Layers>
+  <Built>true</Built>
+  <LossFunction xsi:type="MeanSquaredError" />
+  <Optimizer xsi:type="SGD">
+    <LearningRate>0.01</LearningRate>
+  </Optimizer>
+</Sequential>

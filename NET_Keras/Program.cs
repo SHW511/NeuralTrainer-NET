@@ -13,6 +13,7 @@ using ManagedCuda;
 using Newtonsoft.Json;
 using System.Drawing;
 using System.Formats.Asn1;
+using NeuralNetwork.Ext;
 
 namespace NET_Keras
 {
@@ -20,7 +21,16 @@ namespace NET_Keras
     {
         static void Main()
         {
-            TryTextGeneration();
+            TryLoadNumbers();
+        }
+
+        public static void TryLoadNumbers()
+        {
+            var model = new Sequential();
+            model.Load("1.xml");
+
+            var result = model.Predict(new float[,] { { 9.0f, 10.0f } });
+            Console.WriteLine(result[0,0]);
         }
 
         public static void TryNumbers()
@@ -38,12 +48,12 @@ namespace NET_Keras
             // Compile the model
             model.Compile(lossFunction, optimizer);
 
-            // Build the model
-            model.Build(new int[] { -1, 2 }); // Use -1 to indicate any batch size
-
             // Dummy training data
             float[,] xTrain = new float[,] { { 1.0f, 2.0f }, { 3.0f, 4.0f }, { 5.0f, 6.0f }, { 7.0f, 8.0f } };
             float[,] yTrain = new float[,] { { 3.0f }, { 7.0f }, { 11.0f }, { 15.0f } };
+
+            // Build the model with the correct input shape
+            model.Build(new int[] { xTrain.GetLength(0), xTrain.GetLength(1) });
 
             model.Fit(xTrain, yTrain, 10, 16, 1);
 
@@ -53,6 +63,18 @@ namespace NET_Keras
 
             // Print the prediction
             Console.WriteLine($"Prediction: {yPred[0, 0]}");
+
+            Console.WriteLine("Do you want to save this model? (Y/N):");
+            bool saveModel = Console.ReadLine().ToLower() == "y";
+
+            if(saveModel)
+            {
+                Console.Write("Enter the model name:");
+                
+                string modelName = Console.ReadLine();
+
+                model.Save(modelName);
+            }
         }
 
         public static void TryTextGeneration()

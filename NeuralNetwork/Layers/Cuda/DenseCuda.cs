@@ -42,7 +42,18 @@ namespace NeuralNetwork.Layers.Cuda
                 throw new ArgumentException("Input shape should be a 2D tensor");
 
             InputShape = inputShape;
-            Weights = Init(inputShape[1], OutputDim);
+            Weights = Init(inputShape[0], OutputDim);
+
+            Console.WriteLine("Initialized Weights:");
+            for (int i = 0; i < Weights.GetLength(0); i++)
+            {
+                for (int j = 0; j < Weights.GetLength(1); j++)
+                {
+                    Console.Write($"{Weights[i, j]} ");
+                }
+                Console.WriteLine();
+            }
+
             weightsDevice = new CudaDeviceVariable<float>(Weights.Length);
             weightsDevice.CopyToDevice(Weights);
 

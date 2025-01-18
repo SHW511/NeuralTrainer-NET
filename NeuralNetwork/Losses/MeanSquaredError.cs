@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 
 namespace NeuralNetwork.Losses
 {
+    [Serializable]
     public class MeanSquaredError : Loss
     {
         public override float Calculate(float[,] truth, float[,] pred)

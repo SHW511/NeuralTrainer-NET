@@ -6,13 +6,20 @@ using System.Threading.Tasks;
 
 namespace NeuralNetwork.Optimizers
 {
+    [Serializable]
     public class SGD : Optimizer
     {
+        public float LearningRate { get => learningRate; set => learningRate = value; }
         private float learningRate;
+
+        public SGD()
+        {
+            
+        }
 
         public SGD(float learningRate)
         {
-            this.learningRate = learningRate;
+            this.LearningRate = learningRate;
         }
 
         public override void Update(List<float[,]> weights, List<float[,]> gradients)
@@ -27,7 +34,7 @@ namespace NeuralNetwork.Optimizers
                         {
                             for (int k = 0; k < weights[i].GetLength(1); k++)
                             {
-                                weights[i][j, k] -= learningRate * gradients[i][j, k];
+                                weights[i][j, k] -= LearningRate * gradients[i][j, k];
                             }
                         }
                         catch (IndexOutOfRangeException)

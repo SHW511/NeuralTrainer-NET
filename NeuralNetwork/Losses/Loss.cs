@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 
 namespace NeuralNetwork.Losses
 {
+    [Serializable]
     public abstract class Loss
     {
         public abstract float Calculate(float[,] predicted, float[,] actual);
