@@ -13,7 +13,7 @@ namespace NeuralNetwork.Ext
     {
         public static void Save(this Sequential model, string name, string path = "")
         {
-            XmlSerializer serializer = new XmlSerializer(typeof(Sequential), [typeof(Layer), typeof(MeanSquaredError), typeof(SGD), typeof(Dense)]);
+            XmlSerializer serializer = new XmlSerializer(typeof(Sequential), [typeof(MeanSquaredError), typeof(SGD), typeof(Dense)]);
 
             if (string.IsNullOrEmpty(path))
             {

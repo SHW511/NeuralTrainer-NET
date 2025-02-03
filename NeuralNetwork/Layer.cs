@@ -8,14 +8,14 @@ using System.Xml.Schema;
 
 namespace NeuralNetwork
 {
-    [Serializable]
-    public abstract class Layer : IXmlSerializable
+    //[Serializable]
+    public abstract class Layer // : IXmlSerializable
     {
-        public bool Built { get; protected set; } = false;
-        public int InputDim { get; protected set; }
-        public int OutputDim { get; protected set; }
-        public int[] InputShape { get; protected set; }
-        public float[,] Weights { get; protected set; }
+        public bool Built { get; set; } = false;
+        public int InputDim { get; set; }
+        public int OutputDim { get; set; }
+        public int[] InputShape { get; set; }
+        public float[,] Weights { get; set; }
 
         public abstract void Build(int[] inputShape);
         public abstract float[,] Call(float[,] inputs);

@@ -6,13 +6,17 @@ using System.Runtime.Serialization;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
+using System.Xml;
+using System.Xml.Schema;
+using System.Xml.Serialization;
 using NeuralNetwork.Losses;
 using NeuralNetwork.Optimizers;
+using NeuralNetwork.SerializationHelper;
 
 namespace NeuralNetwork
 {
     [Serializable]
-    public class Sequential : ISerializable
+    public class Sequential : ISerializable, IXmlSerializable
     {
         private List<Layer> layers;
         private bool built;
@@ -45,7 +49,7 @@ namespace NeuralNetwork
             Layers.Add(layer);
             if (!Built)
             {
-                layer.Build(new int[] { 0, layer.InputDim });
+                layer.Build(new int[] { 1, layer.InputDim });
                 Built = true;
             }
             else
@@ -97,7 +101,7 @@ namespace NeuralNetwork
                 }
                 if (epoch % reportInterval == 0)
                 {
-                    Console.WriteLine($"Epoch {epoch + 1}/{epochs}, Loss: {epochLoss / (numSamples / batchSize)}, Time: {stopwatch.Elapsed}");
+                    Console.WriteLine($"Epoch {epoch + 1}/{epochs}, Loss: {epochLoss}, Time: {stopwatch.Elapsed}");
                 }
             }
         }
@@ -326,6 +330,16 @@ namespace NeuralNetwork
             {
                 output = layer.Call(output);
             }
+
+            // Clip the output to avoid numerical instability
+            for (int i = 0; i < output.GetLength(0); i++)
+            {
+                for (int j = 0; j < output.GetLength(1); j++)
+                {
+                    output[i, j] = Math.Max(Math.Min(output[i, j], 1.0f), float.Epsilon);
+                }
+            }
+
             return output;
         }
 
@@ -345,6 +359,41 @@ namespace NeuralNetwork
             info.AddValue("Built", Built);
             info.AddValue("LossFunction", LossFunction);
             info.AddValue("Optimizer", Optimizer);
+        }
+
+        public XmlSchema GetSchema()
+        {
+            throw new NotImplementedException();
+        }
+
+        public void ReadXml(XmlReader reader)
+        {
+            throw new NotImplementedException();
+        }
+
+        public void WriteXml(XmlWriter writer)
+        {
+            writer.WriteElementString("Built", Built.ToString());
+            writer.WriteStartElement("Layers");
+            foreach (var layer in Layers)
+            {
+                writer.WriteStartElement(layer.GetType().Name);
+
+                var jaggedWeights = ArrayHelpers.ConvertToJaggedArray(layer.Weights);
+
+                writer.WriteStartElement("Weights");
+                for (int i = 0; i < jaggedWeights.Length; i++)
+                {
+                    for (int j = 0; j < jaggedWeights[i].Length; j++)
+                    {
+                        writer.WriteElementString("Weight", jaggedWeights[i][j].ToString());
+                    }
+                }
+                writer.WriteEndElement();
+
+                writer.WriteEndElement();
+            }
+            writer.WriteEndElement();
         }
     }
 }

@@ -21,7 +21,7 @@ namespace NET_Keras
     {
         static void Main()
         {
-            TryLoadNumbers();
+            TryNumbers();
         }
 
         public static void TryLoadNumbers()
@@ -30,36 +30,58 @@ namespace NET_Keras
             model.Load("1.xml");
 
             var result = model.Predict(new float[,] { { 9.0f, 10.0f } });
-            Console.WriteLine(result[0,0]);
+            Console.WriteLine(result[0, 0]);
         }
 
         public static void TryNumbers()
-        {
-            // Create a Sequential model
+        { 
             var model = new Sequential();
 
-            // Add a single Dense layer
-            model.Add(new Dense(1, activation: Activations.ReLU));
+            model.Add(new DenseCuda(8, activation: Activations.ReLU)
+            {
+                InputDim = 4
+            });
+            model.Add(new DenseCuda(3, activation: Activations.ReLU));
+            model.Add(new DenseCuda(1, activation: Activations.Linear));
 
-            // Create loss function and optimizer instances
             var lossFunction = new MeanSquaredError();
             var optimizer = new SGD(0.01f);
 
-            // Compile the model
             model.Compile(lossFunction, optimizer);
 
             // Dummy training data
-            float[,] xTrain = new float[,] { { 1.0f, 2.0f }, { 3.0f, 4.0f }, { 5.0f, 6.0f }, { 7.0f, 8.0f } };
-            float[,] yTrain = new float[,] { { 3.0f }, { 7.0f }, { 11.0f }, { 15.0f } };
+            float[,] xTrain = new float[,]
+            {
+                { 1.0f, 2.0f, 3.0f, 4.0f },
+                { 2.0f, 3.0f, 4.0f, 5.0f },
+                { 3.0f, 4.0f, 5.0f, 6.0f },
+                { 4.0f, 5.0f, 6.0f, 7.0f },
+                { 5.0f, 6.0f, 7.0f, 8.0f },
+                { 6.0f, 7.0f, 8.0f, 9.0f },
+                { 7.0f, 8.0f, 9.0f, 10.0f },
+                { 8.0f, 9.0f, 10.0f, 11.0f }
+            };
+
+            float[,] yTrain = new float[,]
+            {
+                { 10.0f },
+                { 14.0f },
+                { 18.0f },
+                { 22.0f },
+                { 16.0f },
+                { 30.0f },
+                { 34.0f },
+                { 38.0f }
+            };
 
             // Build the model with the correct input shape
             model.Build(new int[] { xTrain.GetLength(0), xTrain.GetLength(1) });
 
-            model.Fit(xTrain, yTrain, 10, 16, 1);
+            model.Fit(xTrain, yTrain, 5, 8, 1);
 
             // Predict
-            float[,] xTest = new float[,] { { 9.0f, 10.0f } };
-            float[,] yPred = model.Predict(xTest);
+            float[,] xTest = new float[,] { { 12.0f, 13.0f, 14.0f, 15.0f } };
+            float[,] yPred = model.Predict(xTest); // Expected output: 54.0
 
             // Print the prediction
             Console.WriteLine($"Prediction: {yPred[0, 0]}");
@@ -67,10 +89,10 @@ namespace NET_Keras
             Console.WriteLine("Do you want to save this model? (Y/N):");
             bool saveModel = Console.ReadLine().ToLower() == "y";
 
-            if(saveModel)
+            if (saveModel)
             {
                 Console.Write("Enter the model name:");
-                
+
                 string modelName = Console.ReadLine();
 
                 model.Save(modelName);

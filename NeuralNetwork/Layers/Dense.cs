@@ -200,35 +200,60 @@ namespace NeuralNetwork.Layers
         {
             writer.WriteStartElement("Dense");
 
-            base.WriteXml(writer);
-
             writer.WriteElementString("OutputDim", OutputDim.ToString());
             writer.WriteElementString("UseBias", UseBias.ToString());
+
+            writer.WriteElementString("InputDim", InputDim.ToString());
+
+            writer.WriteStartElement("InputShape");
+
+            foreach (var dim in InputShape)
+            {
+                writer.WriteElementString("Dim", dim.ToString());
+            }
+
+            writer.WriteEndElement();
+
             writer.WriteStartElement("Biases");
             foreach (var bias in Biases)
             {
                 writer.WriteElementString("Bias", bias.ToString());
             }
             writer.WriteEndElement();
+
             writer.WriteStartElement("Weights");
-            for (int i = 0; i < Weights.GetLength(0); i++)
+
+            var jaggedWeights = ConvertToJaggedArray(Weights);
+
+            foreach (var row in jaggedWeights)
             {
                 writer.WriteStartElement("Row");
-                for (int j = 0; j < Weights.GetLength(1); j++)
+                foreach (var col in row)
                 {
-                    writer.WriteElementString("Col", Weights[i, j].ToString());
+                    writer.WriteElementString("Col", col.ToString());
                 }
                 writer.WriteEndElement();
             }
+
+
+
+            //for (int i = 0; i < Weights.GetLength(0); i++)
+            //{
+            //    writer.WriteStartElement("Row");
+            //    for (int j = 0; j < Weights.GetLength(1); j++)
+            //    {
+            //        writer.WriteElementString("Col", Weights[i, j].ToString());
+            //    }
+            //    writer.WriteEndElement();
+            //}
+
             writer.WriteEndElement();
             writer.WriteEndElement();
         }
 
         public void ReadXml(XmlReader reader)
         {
-            reader.ReadStartElement("Dense");
-
-            base.ReadXml(reader);
+            //base.ReadXml(reader);
 
             OutputDim = int.Parse(reader.ReadElementString("OutputDim"));
             UseBias = bool.Parse(reader.ReadElementString("UseBias"));
@@ -272,6 +297,22 @@ namespace NeuralNetwork.Layers
                 }
             }
             return multiArray;
+        }
+
+        private float[][] ConvertToJaggedArray(float[,] multiArray)
+        {
+            int rows = multiArray.GetLength(0);
+            int cols = multiArray.GetLength(1);
+            float[][] jaggedArray = new float[rows][];
+            for (int i = 0; i < rows; i++)
+            {
+                jaggedArray[i] = new float[cols];
+                for (int j = 0; j < cols; j++)
+                {
+                    jaggedArray[i][j] = multiArray[i, j];
+                }
+            }
+            return jaggedArray;
         }
     }
 }

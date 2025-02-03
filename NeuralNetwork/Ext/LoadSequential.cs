@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using NeuralNetwork.Losses;
 using NeuralNetwork.Optimizers;
 using System.Xml.Serialization;
+using NeuralNetwork.Layers;
 
 namespace NeuralNetwork.Ext
 {
@@ -29,7 +30,7 @@ namespace NeuralNetwork.Ext
                 throw new FileNotFoundException("File not found", path);
             }
 
-            XmlSerializer serializer = new XmlSerializer(typeof(Sequential), [typeof(Layer), typeof(MeanSquaredError), typeof(SGD)]);
+            XmlSerializer serializer = new XmlSerializer(typeof(Sequential), [typeof(Layer), typeof(MeanSquaredError), typeof(SGD), typeof(Dense)]);
             using (TextReader reader = new StreamReader(path))
             {
                 model = (Sequential)serializer.Deserialize(reader);
