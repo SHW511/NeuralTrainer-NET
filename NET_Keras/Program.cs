@@ -21,7 +21,7 @@ namespace NET_Keras
     {
         static void Main()
         {
-            TryNumbers();
+            TryTextGeneration();
         }
 
         public static void TryLoadNumbers()
@@ -103,39 +103,31 @@ namespace NET_Keras
         {
             string text = File.ReadAllText("training_text.txt");
 
-            // Tokenize the text
             var vocab = TextPreProcessing.Tokenize(text);
             var reverseVocab = vocab.ToDictionary(kv => kv.Value, kv => kv.Key);
 
-            // Convert text to sequences
             var sequences = TextPreProcessing.TextToSequences(text, vocab);
 
-            // Define the maximum sequence length
             int maxLen = 50;
             sequences = TextPreProcessing.PadSequences(sequences, maxLen);
 
-            // Create a Sequential model
             var model = new Sequential();
 
-            // Add layers to the model
             model.Add(new EmbeddingCuda(vocab.Count, 30));
             model.Add(new LSTMCuda(30));
             //model.Add(new DenseCuda(30, activation: ActivationsCuda.ReLU));
-            model.Add(new LSTMCuda(30));
+            //model.Add(new LSTMCuda(15));
             model.Add(new DenseCuda(vocab.Count, activation: ActivationsCuda.SoftMax)); // Output layer
 
             Console.WriteLine("Layers added.");
 
-            // Create loss function and optimizer instances
             var lossFunction = new CategoricalCrossentropy();
-            var optimizer = new Adam(0.001f);
+            var optimizer = new Adam(0.01f);
 
-            // Compile the model
             model.Compile(lossFunction, optimizer);
 
             Console.WriteLine("Model compiled");
 
-            // Build the model
             model.Build(new int[] { -1, maxLen }); // Use -1 to indicate any batch size
 
             // Dummy training data (for demonstration purposes)
@@ -149,23 +141,21 @@ namespace NET_Keras
 
             Console.WriteLine("Starting training...");
 
-            var lrScheduler = new LearningRateScheduler(0.001f, 0.96f, 1000);
+            //var lrScheduler = new LearningRateScheduler(0.001f, 0.96f, 1000);
 
             using (var context = new CudaContext())
             {
                 int batchSize = 128;
-                int epochs = 5;
+                int epochs = 10;
                 model.Fit(xTrain, yTrain, epochs, batchSize, 1);
             }
-            // Create a TextGenerator instance
+
             var textGenerator = new TextGenerator(model, reverseVocab, maxLen);
 
-            // Generate text
             string seedText = "This is a hole";
             int numWords = 50;
             string generatedText = textGenerator.GenerateText(seedText, numWords);
 
-            // Print the generated text
             Console.WriteLine($"Generated Text: {generatedText}");
         }
 
