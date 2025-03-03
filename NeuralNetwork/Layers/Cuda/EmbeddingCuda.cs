@@ -50,6 +50,9 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.BlockDimensions = blockSize;
             kernel.Run(embeddingsDevice.DevicePointer, gradientDevice.DevicePointer, inputIndicesDevice.DevicePointer, samples, sequenceLength, InputDim, OutputDim, 0.01f); // Example learning rate
 
+            float embResult = default;
+            embeddingsDevice.CopyToHost(ref embResult);
+
             // Free GPU memory
             gradientDevice.Dispose();
             inputIndicesDevice.Dispose();
