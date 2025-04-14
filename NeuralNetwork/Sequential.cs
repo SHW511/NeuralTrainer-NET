@@ -283,18 +283,21 @@ namespace NeuralNetwork
             return lossValue;
         }
 
-        private float[,] ComputeLossGradient(float[,] y, float[,] output)
+        public float[,] ComputeLossGradient(float[,] y, float[,] output)
         {
-            // Implement the gradient calculation for the loss function
-            // This is a placeholder implementation
-            float[,] gradient = new float[y.GetLength(0), y.GetLength(1)];
-            for (int i = 0; i < y.GetLength(0); i++)
+            int rows = y.GetLength(0);
+            int cols = y.GetLength(1);
+
+            float[,] gradient = new float[rows, cols];
+
+            for (int i = 0; i < rows; i++)
             {
-                for (int j = 0; j < y.GetLength(1); j++)
+                for (int j = 0; j < cols; j++)
                 {
-                    gradient[i, j] = output[i, j] - y[i, j];
+                    gradient[i, j] = 2 * (output[i, j] - y[i, j]);
                 }
             }
+
             return gradient;
         }
 

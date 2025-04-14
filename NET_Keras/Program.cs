@@ -37,15 +37,16 @@ namespace NET_Keras
         { 
             var model = new Sequential();
 
-            model.Add(new DenseCuda(8, activation: Activations.ReLU)
+            model.Add(new DenseCuda(8, activation: Activations.Linear)
             {
                 InputDim = 4
             });
-            model.Add(new DenseCuda(3, activation: Activations.ReLU));
+            model.Add(new DenseCuda(4, activation: Activations.Linear));
+            model.Add(new DenseCuda(2, activation: Activations.Linear));
             model.Add(new DenseCuda(1, activation: Activations.Linear));
 
             var lossFunction = new MeanSquaredError();
-            var optimizer = new SGD(0.01f);
+            var optimizer = new Adam();
 
             model.Compile(lossFunction, optimizer);
 
@@ -77,7 +78,7 @@ namespace NET_Keras
             // Build the model with the correct input shape
             model.Build(new int[] { xTrain.GetLength(0), xTrain.GetLength(1) });
 
-            model.Fit(xTrain, yTrain, 5, 8, 1);
+            model.Fit(xTrain, yTrain, 5, 32, 1);
 
             // Predict
             float[,] xTest = new float[,] { { 12.0f, 13.0f, 14.0f, 15.0f } };
@@ -113,6 +114,10 @@ namespace NET_Keras
 
             var model = new Sequential();
 
+            model.Add(new DenseCuda(maxLen, activation: Activations.Linear)
+            {
+                InputDim = vocab.Count
+            });
             model.Add(new EmbeddingCuda(vocab.Count, 30));
             model.Add(new LSTMCuda(30));
             model.Add(new DenseCuda(30, activation: ActivationsCuda.ReLU));

@@ -80,7 +80,15 @@ namespace NeuralNetwork.Layers.Cuda
 
             CudaLinker linker = new CudaLinker();
             linker.AddFile(path, ManagedCuda.BasicTypes.CUJITInputType.PTX, null);
-            linker.AddFile(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\lib\x64\cudadevrt.lib", ManagedCuda.BasicTypes.CUJITInputType.Library, null);
+
+            if (Directory.Exists(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\"))
+            {
+                linker.AddFile(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\lib\x64\cudadevrt.lib", ManagedCuda.BasicTypes.CUJITInputType.Library, null);
+            }
+            else
+            {
+                linker.AddFile(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\lib\x64\cudadevrt.lib", ManagedCuda.BasicTypes.CUJITInputType.Library, null);
+            }
             var linkerImage = linker.Complete();
             linker.Dispose();
 
