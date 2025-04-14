@@ -115,8 +115,8 @@ namespace NET_Keras
 
             model.Add(new EmbeddingCuda(vocab.Count, 30));
             model.Add(new LSTMCuda(30));
-            //model.Add(new DenseCuda(30, activation: ActivationsCuda.ReLU));
-            //model.Add(new LSTMCuda(15));
+            model.Add(new DenseCuda(30, activation: ActivationsCuda.ReLU));
+            model.Add(new LSTMCuda(15));
             model.Add(new DenseCuda(vocab.Count, activation: ActivationsCuda.SoftMax)); // Output layer
 
             Console.WriteLine("Layers added.");
@@ -157,11 +157,13 @@ namespace NET_Keras
             string generatedText = textGenerator.GenerateText(seedText, numWords);
 
             Console.WriteLine($"Generated Text: {generatedText}");
+
+            Console.ReadLine();
         }
 
         public static void TryImageTraining()
         {
-            var (xTrain, yTrain) = LoadImageData("C:\\Users\\SvenW\\source\\repos\\NET_Keras\\NET_Keras\\imgs\\training\\", "500selection.txt");
+            var (xTrain, yTrain) = LoadImageData("\\imgs\\training\\", "500selection.txt");
 
             var model = new Sequential();
             model.Add(new Conv2D(32, 3, padding: 1));
@@ -198,9 +200,12 @@ namespace NET_Keras
                 string line;
                 while ((line = reader.ReadLine()) != null)
                 {
-                    var fields = line.Split('\t');
+                    var fields = line.Split("__");
                     var id = fields[0];
                     var jsonString = fields[2];
+
+                    if (string.IsNullOrWhiteSpace(jsonString))
+                        continue;
 
                     // Load the image
                     var imagePath = Path.Combine(imageFolderPath, id + ".png");

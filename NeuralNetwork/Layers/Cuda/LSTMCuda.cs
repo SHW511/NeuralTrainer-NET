@@ -104,6 +104,8 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.Run(wDevice.DevicePointer, uDevice.DevicePointer, inputsDevice.DevicePointer, h_tDevice.DevicePointer, cDevice.DevicePointer, bDevice.DevicePointer,
                        f_tDevice.DevicePointer, i_tDevice.DevicePointer, c_tildeDevice.DevicePointer, o_tDevice.DevicePointer, cDevice.DevicePointer, hDevice.DevicePointer, inputDim, Units);
 
+            context.Synchronize();
+
             // Copy the result back to the CPU
             hDevice.CopyToHost(h);
 
@@ -146,7 +148,7 @@ namespace NeuralNetwork.Layers.Cuda
             var kernel = context.LoadKernel(path, "LSTMBackward");
 
             // Define block and grid sizes
-            dim3 blockSize = new dim3(Units);
+            dim3 blockSize = new dim3(128); //new dim3(Units);
             dim3 gridSize = new dim3(timesteps);
 
             // Launch the kernel
@@ -160,6 +162,8 @@ namespace NeuralNetwork.Layers.Cuda
             }
 
             kernel.Run(gradientDevice.DevicePointer, wDevice.DevicePointer, uDevice.DevicePointer, bDevice.DevicePointer, dWDevice.DevicePointer, dUDevice.DevicePointer, dbDevice.DevicePointer, dXDevice.DevicePointer, timesteps, inputDim, Units);
+
+            context.Synchronize();
 
             // Copy the result back to the CPU
             dWDevice.CopyToHost(dW);

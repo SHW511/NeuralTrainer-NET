@@ -123,6 +123,8 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.BlockDimensions = blockSize;
             kernel.Run(inputsDevice.DevicePointer, gradientDevice.DevicePointer, weightsDevice.DevicePointer, weightGradientDevice.DevicePointer, biasGradientDevice.DevicePointer, inputGradientDevice.DevicePointer, batchSize, inputDim, OutputDim, UseBias, 0.01f); // Example learning rate
 
+            context.Synchronize();
+
             // Copy the result back to the CPU
             weightGradientDevice.CopyToHost(weightGradient);
             biasGradientDevice.CopyToHost(biasGradient);
@@ -187,6 +189,8 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.GridDimensions = gridSize;
             kernel.BlockDimensions = blockSize;
             kernel.Run(aDevice.DevicePointer, bDevice.DevicePointer, resultDevice.DevicePointer, aRows, aCols, bCols);
+
+            context.Synchronize();
 
             // Copy the result back to the CPU
             resultDevice.CopyToHost(result);

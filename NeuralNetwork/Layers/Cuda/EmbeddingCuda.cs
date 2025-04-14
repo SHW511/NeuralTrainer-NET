@@ -50,6 +50,8 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.BlockDimensions = blockSize;
             kernel.Run(embeddingsDevice.DevicePointer, gradientDevice.DevicePointer, inputIndicesDevice.DevicePointer, samples, sequenceLength, InputDim, OutputDim, 0.01f); // Example learning rate
 
+            context.Synchronize();
+
             // Free GPU memory
             gradientDevice.Dispose();
             inputIndicesDevice.Dispose();
@@ -91,13 +93,15 @@ namespace NeuralNetwork.Layers.Cuda
             var kernel = context.LoadKernelPTX(path, "EmbeddingLookup");
 
             // Define block and grid sizes
-            dim3 blockSize = new dim3(sequenceLength);
+            dim3 blockSize = new dim3(128); //dim3(sequenceLength);
             dim3 gridSize = new dim3(samples);
 
             // Launch the kernel
             kernel.GridDimensions = gridSize;
             kernel.BlockDimensions = blockSize;
             kernel.Run(embeddingsDevice.DevicePointer, inputsDevice.DevicePointer, outputDevice.DevicePointer, samples, sequenceLength, OutputDim);
+
+            context.Synchronize();
 
             // Copy the result back to the CPU
             outputDevice.CopyToHost(output);
