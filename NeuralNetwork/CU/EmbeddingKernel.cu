@@ -6,6 +6,13 @@
     if (sample < samples && seq < sequenceLength)
     {
         int index = (int)inputs[sample * sequenceLength + seq];
+
+        // Ensure index is within bounds
+        if (index < 0 || index >= samples)
+        {
+            return;
+        }
+
         for (int k = 0; k < outputDim; k++)
         {
             output[sample * sequenceLength * outputDim + seq * outputDim + k] = embeddings[index * outputDim + k];

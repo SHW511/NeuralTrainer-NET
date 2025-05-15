@@ -112,7 +112,7 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.Run(wDevice.DevicePointer, uDevice.DevicePointer, inputsDevice.DevicePointer, h_tDevice.DevicePointer, cDevice.DevicePointer, bDevice.DevicePointer,
                        f_tDevice.DevicePointer, i_tDevice.DevicePointer, c_tildeDevice.DevicePointer, o_tDevice.DevicePointer, cDevice.DevicePointer, hDevice.DevicePointer, inputDim, Units);
 
-            context.Synchronize();
+            //context.Synchronize();
 
             // Copy the result back to the CPU
             hDevice.CopyToHost(h);
@@ -171,7 +171,7 @@ namespace NeuralNetwork.Layers.Cuda
 
             kernel.Run(gradientDevice.DevicePointer, wDevice.DevicePointer, uDevice.DevicePointer, bDevice.DevicePointer, dWDevice.DevicePointer, dUDevice.DevicePointer, dbDevice.DevicePointer, dXDevice.DevicePointer, timesteps, inputDim, Units);
 
-            context.Synchronize();
+            //context.Synchronize();
 
             // Copy the result back to the CPU
             dWDevice.CopyToHost(dW);

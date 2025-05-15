@@ -21,7 +21,7 @@
 	.param .u32 EmbeddingLookup_param_5
 )
 {
-	.reg .pred 	%p<9>;
+	.reg .pred 	%p<13>;
 	.reg .f32 	%f<7>;
 	.reg .b32 	%r<28>;
 	.reg .b64 	%rd<29>;
@@ -30,36 +30,40 @@
 	ld.param.u64 	%rd16, [EmbeddingLookup_param_0];
 	ld.param.u64 	%rd15, [EmbeddingLookup_param_1];
 	ld.param.u64 	%rd17, [EmbeddingLookup_param_2];
-	ld.param.u32 	%r17, [EmbeddingLookup_param_3];
-	ld.param.u32 	%r15, [EmbeddingLookup_param_4];
-	ld.param.u32 	%r16, [EmbeddingLookup_param_5];
+	ld.param.u32 	%r15, [EmbeddingLookup_param_3];
+	ld.param.u32 	%r16, [EmbeddingLookup_param_4];
+	ld.param.u32 	%r17, [EmbeddingLookup_param_5];
 	cvta.to.global.u64 	%rd1, %rd17;
 	cvta.to.global.u64 	%rd2, %rd16;
 	mov.u32 	%r1, %ctaid.x;
-	setp.ge.s32 	%p1, %r1, %r17;
+	setp.ge.s32 	%p1, %r1, %r15;
 	mov.u32 	%r2, %tid.x;
-	setp.ge.s32 	%p2, %r2, %r15;
+	setp.ge.s32 	%p2, %r2, %r16;
 	or.pred  	%p3, %p1, %p2;
 	@%p3 bra 	$L__BB0_8;
 
-	mad.lo.s32 	%r3, %r1, %r15, %r2;
-	setp.lt.s32 	%p4, %r16, 1;
-	@%p4 bra 	$L__BB0_8;
-
 	cvta.to.global.u64 	%rd18, %rd15;
+	mad.lo.s32 	%r3, %r1, %r16, %r2;
 	mul.wide.s32 	%rd19, %r3, 4;
 	add.s64 	%rd20, %rd18, %rd19;
 	ld.global.f32 	%f1, [%rd20];
 	cvt.rzi.s32.f32 	%r4, %f1;
-	mul.lo.s32 	%r5, %r3, %r16;
-	and.b32  	%r27, %r16, 3;
-	add.s32 	%r19, %r16, -1;
-	setp.lt.u32 	%p5, %r19, 3;
-	mov.u32 	%r26, 0;
-	@%p5 bra 	$L__BB0_5;
+	setp.lt.s32 	%p4, %r4, 0;
+	setp.ge.s32 	%p5, %r4, %r15;
+	or.pred  	%p6, %p5, %p4;
+	setp.lt.s32 	%p7, %r17, 1;
+	or.pred  	%p8, %p6, %p7;
+	@%p8 bra 	$L__BB0_8;
 
-	sub.s32 	%r25, %r16, %r27;
-	mul.lo.s32 	%r21, %r4, %r16;
+	mul.lo.s32 	%r5, %r3, %r17;
+	and.b32  	%r27, %r17, 3;
+	add.s32 	%r19, %r17, -1;
+	setp.lt.u32 	%p9, %r19, 3;
+	mov.u32 	%r26, 0;
+	@%p9 bra 	$L__BB0_5;
+
+	sub.s32 	%r25, %r17, %r27;
+	mul.lo.s32 	%r21, %r4, %r17;
 	mul.wide.s32 	%rd21, %r21, 4;
 	add.s64 	%rd25, %rd2, %rd21;
 	mul.wide.s32 	%rd4, %r5, 4;
@@ -80,17 +84,17 @@ $L__BB0_4:
 	add.s64 	%rd26, %rd26, 16;
 	add.s64 	%rd25, %rd25, 16;
 	add.s32 	%r25, %r25, -4;
-	setp.ne.s32 	%p6, %r25, 0;
-	@%p6 bra 	$L__BB0_4;
+	setp.ne.s32 	%p10, %r25, 0;
+	@%p10 bra 	$L__BB0_4;
 
 $L__BB0_5:
-	setp.eq.s32 	%p7, %r27, 0;
-	@%p7 bra 	$L__BB0_8;
+	setp.eq.s32 	%p11, %r27, 0;
+	@%p11 bra 	$L__BB0_8;
 
 	add.s32 	%r22, %r26, %r5;
 	mul.wide.s32 	%rd23, %r22, 4;
 	add.s64 	%rd28, %rd1, %rd23;
-	mad.lo.s32 	%r23, %r4, %r16, %r26;
+	mad.lo.s32 	%r23, %r4, %r17, %r26;
 	mul.wide.s32 	%rd24, %r23, 4;
 	add.s64 	%rd27, %rd2, %rd24;
 
@@ -101,8 +105,8 @@ $L__BB0_7:
 	add.s64 	%rd28, %rd28, 4;
 	add.s64 	%rd27, %rd27, 4;
 	add.s32 	%r27, %r27, -1;
-	setp.ne.s32 	%p8, %r27, 0;
-	@%p8 bra 	$L__BB0_7;
+	setp.ne.s32 	%p12, %r27, 0;
+	@%p12 bra 	$L__BB0_7;
 
 $L__BB0_8:
 	ret;

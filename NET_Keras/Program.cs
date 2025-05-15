@@ -120,14 +120,14 @@ namespace NET_Keras
             });
             model.Add(new EmbeddingCuda(vocab.Count, 30));
             model.Add(new LSTMCuda(30));
-            model.Add(new DenseCuda(30, activation: ActivationsCuda.ReLU));
-            model.Add(new LSTMCuda(15));
+            //model.Add(new DenseCuda(30, activation: ActivationsCuda.ReLU));
+            //model.Add(new LSTMCuda(15));
             model.Add(new DenseCuda(vocab.Count, activation: ActivationsCuda.SoftMax)); // Output layer
 
             Console.WriteLine("Layers added.");
 
             var lossFunction = new CategoricalCrossentropy();
-            var optimizer = new Adam(0.01f);
+            var optimizer = new Adam(0.0001f);
 
             model.Compile(lossFunction, optimizer);
 
@@ -150,7 +150,7 @@ namespace NET_Keras
 
             using (var context = new CudaContext())
             {
-                int batchSize = 128;
+                int batchSize = 64;
                 int epochs = 10;
                 model.Fit(xTrain, yTrain, epochs, batchSize, 1);
             }

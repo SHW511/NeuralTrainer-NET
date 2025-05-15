@@ -32,8 +32,6 @@ extern "C" __global__ void DenseBackward(float* inputs, float* gradient, float* 
         }
     }
 
-    __syncthreads();
-
     if (i < inputDim && j < outputDim)
     {
         weights[i * outputDim + j] -= learningRate * weightGradient[i * outputDim + j];
@@ -41,6 +39,11 @@ extern "C" __global__ void DenseBackward(float* inputs, float* gradient, float* 
 
     if (useBias && i < outputDim)
     {
-        biasGradient[i] -= learningRate * biasGradient[i];
+        atomicAdd(&biasGradient[j], gradient[i * outputDim + j]);
+        if(threadIdx.x == 0)
+        {
+           atomicAdd(&biasGradient[j], -learningRate * biasGradient[j]);     
+        }
+        // biasGradient[i] -= learningRate * biasGradient[i];
     }
 }

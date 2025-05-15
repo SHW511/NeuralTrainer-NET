@@ -85,10 +85,10 @@ extern "C" __global__ void LSTMBackward(float* gradient, float* w, float* u, flo
 
         for (int j = 0; j < units; j++)
         {
-            i_gate[j] = 1.0f / (1.0f + exp(-z[j]));
-            f_gate[j] = 1.0f / (1.0f + exp(-z[units + j]));
-            o_gate[j] = 1.0f / (1.0f + exp(-z[units * 2 + j]));
-            g_gate[j] = tanh(z[units * 3 + j]);
+            i_gate[j] = 1.0f / (1.0f + exp(-fminf(fmaxf(i_gate[j], -10.0f), 10.0f)));
+            f_gate[j] = 1.0f / (1.0f + exp(-fminf(fmaxf(f_gate[j], -10.0f), 10.0f)));
+            o_gate[j] = 1.0f / (1.0f + exp(-fminf(fmaxf(o_gate[j], -10.0f), 10.0f)));
+            g_gate[j] = tanh(fminf(fmaxf(g_gate[j], -10.0f), 10.0f));
         }
 
         // Backward pass

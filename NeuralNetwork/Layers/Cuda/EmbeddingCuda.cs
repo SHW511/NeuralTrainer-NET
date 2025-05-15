@@ -28,11 +28,9 @@ namespace NeuralNetwork.Layers.Cuda
             int samples = gradient.GetLength(0);
             int sequenceLength = gradient.GetLength(1) / OutputDim;
 
-            // Allocate memory on the GPU
             var gradientDevice = new CudaDeviceVariable<float>(gradient.Length);
             var inputIndicesDevice = new CudaDeviceVariable<int>(inputIndices.Length);
 
-            // Copy data to the GPU
             gradientDevice.CopyToDevice(gradient);
             inputIndicesDevice.CopyToDevice(inputIndices);
 
@@ -41,17 +39,15 @@ namespace NeuralNetwork.Layers.Cuda
             // Load the kernel from the .ptx file
             var kernel = context.LoadKernel(path, "EmbeddingBackward");
 
-            // Define block and grid sizes
             dim3 blockSize = new dim3(sequenceLength);
             dim3 gridSize = new dim3(samples);
 
-            // Launch the kernel
             kernel.GridDimensions = gridSize;
             kernel.BlockDimensions = blockSize;
             kernel.Run(embeddingsDevice.DevicePointer, gradientDevice.DevicePointer, inputIndicesDevice.DevicePointer, samples, sequenceLength, InputDim, OutputDim, 0.01f); // Example learning rate
 
-            float embResult = default;
-            embeddingsDevice.CopyToHost(ref embResult);
+            float[,] embResult = new float[gradient.Length, inputIndices.Length];
+            embeddingsDevice.CopyToHost(embResult);
 
             //context.Synchronize();
 
@@ -60,7 +56,7 @@ namespace NeuralNetwork.Layers.Cuda
             inputIndicesDevice.Dispose();
 
             // Return null as Embedding layer does not propagate gradients to previous layers
-            return null;
+            return embResult;
         }
 
         public override float[,,,] Backward(float[,,,] gradient)
@@ -104,7 +100,7 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.BlockDimensions = blockSize;
             kernel.Run(embeddingsDevice.DevicePointer, inputsDevice.DevicePointer, outputDevice.DevicePointer, samples, sequenceLength, OutputDim);
 
-            context.Synchronize();
+            //context.Synchronize();
 
             // Copy the result back to the CPU
             outputDevice.CopyToHost(output);
