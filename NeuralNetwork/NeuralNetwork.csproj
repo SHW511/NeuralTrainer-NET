@@ -5,6 +5,9 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <Platforms>AnyCPU;x64</Platforms>
+    <!-- CUDA Compiler Settings -->
+    <CudaPath Condition="'$(CudaPath)' == ''">C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0</CudaPath>
+    <NvccPath>$(CudaPath)\bin\nvcc.exe</NvccPath>
   </PropertyGroup>
 
   <ItemGroup>
@@ -13,28 +16,25 @@
     <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
   </ItemGroup>
 
+  <!-- Collect all CUDA source files -->
   <ItemGroup>
-    <None Update="CU\ActivationsKernel.ptx">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="CU\DenseKernel.ptx">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="CU\EmbeddingKernel.ptx">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="CU\GRUKernel.cu">
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </None>
-    <None Update="CU\GRUKernel.ptx">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="CU\LSTMKernel.ptx">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="CU\LSTMKernelV2.ptx">
+    <CudaKernel Include="CU\*.cu" />
+  </ItemGroup>
+
+  <!-- PTX files to copy to output -->
+  <ItemGroup>
+    <None Include="CU\*.ptx">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <!-- Compile CUDA kernels to PTX before build -->
+  <Target Name="CompileCudaKernels" BeforeTargets="BeforeBuild" Inputs="@(CudaKernel)" Outputs="@(CudaKernel->'%(RootDir)%(Directory)%(Filename).ptx')">
+    <Message Importance="high" Text="Compiling CUDA kernels..." />
+    <Exec Command="&quot;$(NvccPath)&quot; -ptx -allow-unsupported-compiler -o &quot;%(CudaKernel.RootDir)%(CudaKernel.Directory)%(CudaKernel.Filename).ptx&quot; &quot;%(CudaKernel.FullPath)&quot;"
+          Condition="Exists('$(NvccPath)')" />
+    <Warning Text="CUDA compiler (nvcc) not found at $(NvccPath). CUDA kernels will not be compiled. Set CudaPath property to your CUDA installation directory."
+             Condition="!Exists('$(NvccPath)')" />
+  </Target>
 
 </Project>

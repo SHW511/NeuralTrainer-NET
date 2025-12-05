@@ -20,6 +20,41 @@
     }
 }
 
+// Embedding lookup with integer token indices (for Transformer models)
+// tokens: [totalTokens] - flat array of token indices
+// embeddings: [vocabSize, embDim] - embedding matrix
+// output: [totalTokens, embDim] - output embeddings
+// vocabSize: size of vocabulary for bounds checking
+extern "C" __global__ void EmbeddingLookupInt(int* tokens, float* embeddings, float* output, int totalTokens, int embDim, int vocabSize)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < totalTokens)
+    {
+        int tokenId = tokens[idx];
+
+        // Bounds check to prevent invalid memory access
+        if (tokenId < 0 || tokenId >= vocabSize)
+        {
+            // Zero out the output for invalid tokens
+            int outputOffset = idx * embDim;
+            for (int d = 0; d < embDim; d++)
+            {
+                output[outputOffset + d] = 0.0f;
+            }
+            return;
+        }
+
+        int outputOffset = idx * embDim;
+        int embOffset = tokenId * embDim;
+
+        for (int d = 0; d < embDim; d++)
+        {
+            output[outputOffset + d] = embeddings[embOffset + d];
+        }
+    }
+}
+
 extern "C" __global__ void EmbeddingBackward(float* embeddings, float* gradient, int* inputIndices, int samples, int sequenceLength, int inputDim, int outputDim, float learningRate)
 {
     int sample = blockIdx.x;

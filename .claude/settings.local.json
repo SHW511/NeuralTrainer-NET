@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build:*)",
+      "Bash(where:*)",
+      "Bash(nvcc:*)",
+      "Bash(\"C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\VC\\Auxiliary\\Build\\vcvars64.bat\")",
+      "Bash(dir \"C:\\Program Files\\Microsoft Visual Studio\\2022\\*\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
