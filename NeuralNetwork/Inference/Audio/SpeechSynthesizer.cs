@@ -7,18 +7,25 @@ namespace NeuralNetwork.Inference.Audio
 {
     /// <summary>
     /// Speech synthesizer for text-to-speech inference.
-    /// Combines TTS model with vocoder for end-to-end synthesis.
+    /// Supports both CPU (TTSModel) and GPU (TTSModelCuda) models.
     /// </summary>
-    public class SpeechSynthesizer
+    public class SpeechSynthesizer : IDisposable
     {
-        public TTSModel Model { get; }
+        // Use dynamic to support both model types
+        private readonly dynamic _model;
+        private readonly bool _isCudaModel;
+
         public TTSConfig Config { get; }
         public MelSpectrogram MelProcessor { get; }
         public AudioPreProcessing AudioProcessor { get; }
 
+        /// <summary>
+        /// Create synthesizer with CPU model.
+        /// </summary>
         public SpeechSynthesizer(TTSModel model)
         {
-            Model = model;
+            _model = model;
+            _isCudaModel = false;
             Config = model.Config;
 
             MelProcessor = new MelSpectrogram(
@@ -33,8 +40,31 @@ namespace NeuralNetwork.Inference.Audio
                 TargetSampleRate = Config.SampleRate
             };
 
-            // Set model to inference mode
-            Model.SetTraining(false);
+            model.SetTraining(false);
+        }
+
+        /// <summary>
+        /// Create synthesizer with CUDA model for GPU-accelerated synthesis.
+        /// </summary>
+        public SpeechSynthesizer(TTSModelCuda model)
+        {
+            _model = model;
+            _isCudaModel = true;
+            Config = model.Config;
+
+            MelProcessor = new MelSpectrogram(
+                sampleRate: Config.SampleRate,
+                fftSize: Config.FFTSize,
+                hopLength: Config.HopLength,
+                melBins: Config.MelBins
+            );
+
+            AudioProcessor = new AudioPreProcessing
+            {
+                TargetSampleRate = Config.SampleRate
+            };
+
+            model.SetTraining(false);
         }
 
         /// <summary>
@@ -46,14 +76,13 @@ namespace NeuralNetwork.Inference.Audio
         public float[] Synthesize(string text, int speakerId = 0)
         {
             // Convert text to tokens
-            int[] tokens = Model.TextToTokens(text);
+            int[] tokens = _model.TextToTokens(text);
 
             // Run TTS model to get mel spectrogram
-            var (melOutput, stopTokens, attentionWeights) = Model.Forward(
-                tokens,
-                targetMel: null,  // No teacher forcing during inference
-                speakerId: speakerId
-            );
+            var result = _model.Forward(tokens, null, speakerId);
+            float[,] melOutput = result.Item1;
+            float[] stopTokens = result.Item2;
+            float[,] attentionWeights = result.Item3;
 
             // Convert mel spectrogram to waveform using Griffin-Lim
             float[] waveform = MelProcessor.MelSpectrogramToWaveform(melOutput, iterations: 60);
@@ -81,13 +110,12 @@ namespace NeuralNetwork.Inference.Audio
         /// </summary>
         public SynthesisResult SynthesizeDetailed(string text, int speakerId = 0)
         {
-            int[] tokens = Model.TextToTokens(text);
+            int[] tokens = _model.TextToTokens(text);
 
-            var (melOutput, stopTokens, attentionWeights) = Model.Forward(
-                tokens,
-                targetMel: null,
-                speakerId: speakerId
-            );
+            var result = _model.Forward(tokens, null, speakerId);
+            float[,] melOutput = result.Item1;
+            float[] stopTokens = result.Item2;
+            float[,] attentionWeights = result.Item3;
 
             float[] waveform = MelProcessor.MelSpectrogramToWaveform(melOutput, iterations: 60);
             waveform = AudioProcessor.RemovePreEmphasis(waveform);
@@ -111,9 +139,9 @@ namespace NeuralNetwork.Inference.Audio
         /// </summary>
         public float[,] GetMelSpectrogram(string text, int speakerId = 0)
         {
-            int[] tokens = Model.TextToTokens(text);
-            var (melOutput, _, _) = Model.Forward(tokens, null, speakerId);
-            return melOutput;
+            int[] tokens = _model.TextToTokens(text);
+            var result = _model.Forward(tokens, null, speakerId);
+            return (float[,])result.Item1;
         }
 
         /// <summary>
@@ -258,6 +286,14 @@ namespace NeuralNetwork.Inference.Audio
                 {
                     Console.WriteLine("Unknown command. Type 'speak <text>' to synthesize.");
                 }
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_isCudaModel && _model is IDisposable disposable)
+            {
+                disposable.Dispose();
             }
         }
     }

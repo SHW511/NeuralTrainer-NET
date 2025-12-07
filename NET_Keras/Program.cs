@@ -16,6 +16,7 @@ using NeuralNetwork.Models.TTS;
 using NeuralNetwork.Inference.Audio;
 using NeuralNetwork.Tensors;
 using NeuralNetwork.Training;
+using NeuralNetwork.Cuda;
 using Newtonsoft.Json;
 
 namespace NET_Keras
@@ -49,6 +50,7 @@ namespace NET_Keras
             Console.WriteLine("  4. Transformer Full Training");
             Console.WriteLine("  5. TTS Voice Training (NEW)");
             Console.WriteLine("  6. TTS Synthesis Demo");
+            Console.WriteLine("  7. CUDA Optimization Benchmark");
             Console.Write("\nChoice [1]: ");
 
             string modeInput = Console.ReadLine()?.Trim();
@@ -72,10 +74,31 @@ namespace NET_Keras
                 case "6":
                     TryTTSSynthesisDemo();
                     break;
+                case "7":
+                    RunCudaBenchmark();
+                    break;
                 default:
                     TryTransformerQuickTest(useCuda);
                     break;
             }
+        }
+
+        static void RunCudaBenchmark()
+        {
+            Console.WriteLine("=== CUDA Optimization Benchmark ===\n");
+
+            try
+            {
+                CudaBenchmark.RunAll();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Benchmark failed: {ex.Message}");
+                Console.WriteLine(ex.StackTrace);
+            }
+
+            Console.WriteLine("\nPress any key to exit...");
+            Console.ReadKey();
         }
 
         public static void TryLoadNumbers()
@@ -1171,7 +1194,24 @@ namespace NET_Keras
             config.Validate();
             Console.WriteLine(config);
 
-            // Create model (CPU or CUDA)
+            // Auto-tune batch size BEFORE creating model to avoid CUDA context conflicts
+            // The BatchSizeAutoTuner creates its own CudaContext which would invalidate
+            // kernel handles if created after the model
+            int accumSteps = 1;
+            if (useCuda)
+            {
+                Console.WriteLine("\nChecking batch size configuration...");
+                using (var tuner = new BatchSizeAutoTuner())
+                {
+                    // Use AutoTuneWithCache - loads from cache if hardware unchanged, otherwise tunes and saves
+                    var (optBatch, optAccum) = tuner.AutoTuneWithCache(config, targetEffectiveBatch: 256);
+                    dataset.BatchSize = optBatch;
+                    accumSteps = optAccum;
+                    Console.WriteLine($"Using batch size {optBatch} with {optAccum}x accumulation (effective: {optBatch * optAccum})");
+                }
+            }
+
+            // Create model (CPU or CUDA) - AFTER auto-tuning to avoid context conflicts
             dynamic model;
             IDisposable disposableModel = null;
 
@@ -1193,14 +1233,6 @@ namespace NET_Keras
             int epochs = 10;
             float learningRate = config.LearningRate;
 
-            // Optimal batch size for RTX 5090
-            if (useCuda)
-            {
-                var (optBatch, optAccum) = TTSConfigOptimizer.GetOptimalBatchConfig();
-                dataset.BatchSize = optBatch;
-                Console.WriteLine($"Using batch size {optBatch} with {optAccum}x accumulation (effective: {optBatch * optAccum})");
-            }
-
             try
             {
                 for (int epoch = 0; epoch < epochs; epoch++)
@@ -1208,12 +1240,14 @@ namespace NET_Keras
                     stopwatch.Restart();
                     float epochLoss = 0f;
                     int batchCount = 0;
+                    int accumCount = 0;  // Track gradient accumulation
 
                     dataset.Shuffle();
 
                     foreach (var batch in dataset.GetBatches())
                     {
                         batchCount++;
+                        accumCount++;
 
                         // Process each sample in batch
                         float batchLoss = 0f;
@@ -1245,20 +1279,35 @@ namespace NET_Keras
                             // Compute loss
                             float loss = model.ComputeLoss(melOutput, targetMel, stopTokens);
                             batchLoss += loss;
+
+                            // Backward pass accumulates gradients (CUDA model only)
+                            if (useCuda)
+                            {
+                                model.Backward(melOutput, targetMel, stopTokens);
+                            }
                         }
 
                         epochLoss += batchLoss / Math.Max(1, batch.Texts.Length);
 
-                        // Sync weights to device after updates (CUDA)
-                        if (useCuda)
+                        // Apply gradients after accumulating for accumSteps batches
+                        if (useCuda && accumCount >= accumSteps)
                         {
-                            model.SyncToDevice();
+                            // Scale learning rate by accumulation steps for equivalent effective rate
+                            model.ApplyGradients(learningRate / accumSteps);
+                            accumCount = 0;
                         }
 
                         if (batchCount % 5 == 0)
                         {
-                            Console.Write($"\rEpoch {epoch + 1}/{epochs} - Batch {batchCount}/{dataset.NumBatches} - Loss: {epochLoss / batchCount:F4}");
+                            int effectiveBatches = batchCount / Math.Max(1, accumSteps);
+                            Console.Write($"\rEpoch {epoch + 1}/{epochs} - Batch {batchCount}/{dataset.NumBatches} (eff: {effectiveBatches}) - Loss: {epochLoss / batchCount:F4}");
                         }
+                    }
+
+                    // Apply any remaining accumulated gradients at end of epoch
+                    if (useCuda && accumCount > 0)
+                    {
+                        model.ApplyGradients(learningRate / accumCount);
                     }
 
                     stopwatch.Stop();

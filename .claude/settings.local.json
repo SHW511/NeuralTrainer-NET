@@ -10,7 +10,10 @@
       "Bash(powershell -Command \"& { ''1''; ''2'' } | dotnet run --project NET_Keras-CMD.csproj\")",
       "SlashCommand(/add-modality audio voice training)",
       "Bash(nvidia-smi:*)",
-      "Bash(wmic:*)"
+      "Bash(wmic:*)",
+      "Bash(powershell -Command \"Select-String -Path ''C:\\Users\\SvenW\\source\\repos\\SHW511\\NeuralTrainer-NET\\NET_Keras\\bin\\Debug\\net9.0\\CU\\TTSKernel.ptx'' -Pattern ''\\.entry'' | Select-Object -First 20\")",
+      "Bash(powershell -Command:*)",
+      "Bash(dotnet test:*)"
     ],
     "deny": [],
     "ask": []

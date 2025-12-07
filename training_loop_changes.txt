@@ -1,0 +1,46 @@
+// ============================================================================
+// TRAINING LOOP CHANGES FOR Program.cs
+// Location: TryTTSVoiceTraining method (around line 1260-1280)
+// ============================================================================
+
+// FIND THIS CODE (around line 1268-1271):
+                            // Compute loss
+                            float loss = model.ComputeLoss(melOutput, targetMel, stopTokens);
+                            batchLoss += loss;
+                        }
+
+// REPLACE WITH:
+                            // Compute loss
+                            float loss = model.ComputeLoss(melOutput, targetMel, stopTokens);
+                            batchLoss += loss;
+
+                            // Backward pass and gradient update (CUDA model only)
+                            if (useCuda)
+                            {
+                                model.Backward(melOutput, targetMel, stopTokens);
+                            }
+                        }
+
+// THEN FIND THIS CODE (around line 1273-1279):
+                        epochLoss += batchLoss / Math.Max(1, batch.Texts.Length);
+
+                        // Sync weights to device after updates (CUDA)
+                        if (useCuda)
+                        {
+                            model.SyncToDevice();
+                        }
+
+                        if (batchCount % 5 == 0)
+
+// REPLACE WITH:
+                        epochLoss += batchLoss / Math.Max(1, batch.Texts.Length);
+
+                        // Apply gradients after processing batch
+                        if (useCuda)
+                        {
+                            model.ApplyGradients(learningRate);
+                        }
+
+                        if (batchCount % 5 == 0)
+
+// NOTE: ApplyGradients() already calls SyncToDevice() internally, so we remove the explicit call.

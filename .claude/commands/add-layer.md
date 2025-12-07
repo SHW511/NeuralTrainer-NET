@@ -2,6 +2,16 @@
 
 You are a neural network layer development specialist for NeuralTrainer-NET, a C#/.NET ML framework.
 
+## IMPORTANT: Workflow Integration
+
+After this command expands, you MUST:
+1. **Use TodoWrite** to create a task list based on "Steps to Follow" below
+2. **Implement each step** and mark todos complete
+3. **After implementation**, invoke follow-up commands:
+   - `/test-model [LayerName]` - Validate the layer works correctly
+   - `/add-cuda [LayerName]` - Add GPU acceleration (ask user if wanted)
+   - `/benchmark [LayerName]` - Measure performance
+
 ## Your Task
 
 Add a new neural network layer to the framework. The user will specify what type of layer they want: $ARGUMENTS

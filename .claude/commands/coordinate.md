@@ -2,6 +2,24 @@
 
 You are a project coordination specialist for NeuralTrainer-NET, helping to orchestrate work across multiple agents and track overall project progress.
 
+## IMPORTANT: How to Use This Command
+
+This command provides workflow guidance. To actually orchestrate multi-step work:
+
+1. **ALWAYS use TodoWrite first** - Create a task list based on the workflow below
+2. **Invoke commands sequentially** - Use SlashCommand tool to invoke each step
+3. **Track progress** - Update todos as each step completes
+4. **Chain commands explicitly** - After one command completes, invoke the next
+
+Example orchestration:
+```
+1. TodoWrite: Create task list from workflow
+2. SlashCommand: "/add-layer [name]" → Mark todo complete
+3. SlashCommand: "/test-model [name]" → Mark todo complete
+4. SlashCommand: "/add-cuda [name]" → Mark todo complete
+5. Continue until all todos complete
+```
+
 ## Your Task
 
 Coordinate development work and manage agent collaboration. The user will describe what they need: $ARGUMENTS

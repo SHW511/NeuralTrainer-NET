@@ -2,6 +2,16 @@
 
 You are a CUDA development specialist for NeuralTrainer-NET, helping to add GPU acceleration to neural network components.
 
+## IMPORTANT: Workflow Integration
+
+After this command expands, you MUST:
+1. **Use TodoWrite** to create a task list based on "Steps to Follow" below
+2. **Implement each step** and mark todos complete
+3. **After implementation**, invoke follow-up commands:
+   - `/test-model` - Verify CUDA output matches CPU version
+   - `/benchmark` - Measure GPU vs CPU speedup
+   - `/review-ml` - Code review if significant changes
+
 ## Your Task
 
 Add CUDA GPU acceleration to a component. The user will specify what to accelerate: $ARGUMENTS

@@ -96,11 +96,19 @@ dotnet run --project NET_Keras/NET_Keras-CMD.csproj
 
 ## Agent Activation Rules
 
-**IMPORTANT**: When working on tasks in this project, you MUST automatically activate the appropriate agents based on task context. Do not wait for the user to explicitly request an agent.
+**IMPORTANT**: When working on tasks in this project, you MUST invoke the appropriate slash commands for guidance. Use the SlashCommand tool to expand command prompts.
+
+### How Commands Work
+
+Slash commands are **guidance prompts** stored in `.claude/commands/`. When invoked:
+1. The command's markdown content expands into the conversation
+2. Follow the instructions provided in the expanded prompt
+3. Use TodoWrite to track multi-step workflows
+4. Invoke follow-up commands manually using SlashCommand tool
 
 ### Automatic Activation Triggers
 
-| When the task involves... | Activate Agent |
+| When the task involves... | Invoke Command |
 |---------------------------|----------------|
 | Creating/implementing a new layer (Dense, Conv, Attention, etc.) | `/add-layer` |
 | GPU acceleration, CUDA kernels, PTX files | `/add-cuda` |
@@ -116,34 +124,50 @@ dotnet run --project NET_Keras/NET_Keras-CMD.csproj
 | Architecture questions, design decisions, structure | `/architecture` |
 | Complex multi-step tasks, workflow planning | `/coordinate` |
 
-### Multi-Agent Activation
+### Multi-Step Workflows
 
-For complex tasks, activate multiple agents in sequence:
+For complex tasks, invoke commands in sequence with TodoWrite tracking:
 
-1. **Implementing a new layer**: `/add-layer` → `/test-model` → `/add-cuda` → `/benchmark`
-2. **Adding audio support**: `/coordinate` → `/add-modality` → `/data-pipeline` → `/add-layer`
+1. **Implementing a new layer**:
+   ```
+   TodoWrite: [add-layer, test-model, add-cuda, benchmark]
+   SlashCommand: /add-layer → complete → /test-model → complete → /add-cuda → complete → /benchmark
+   ```
+
+2. **Adding audio support**:
+   ```
+   TodoWrite: [coordinate (plan), add-modality, data-pipeline, add-layer, test-model]
+   SlashCommand: /coordinate → plan tasks → then invoke each command sequentially
+   ```
+
 3. **Fixing training bugs**: `/debug-training` → `/test-model` → `/review-ml`
+
 4. **Performance optimization**: `/benchmark` → `/add-cuda` → `/test-model`
 
-### Activation Examples
+### Invocation Examples
 
 ```
 User: "Add a GRU layer"
-→ Activate: /add-layer GRU
+→ SlashCommand: /add-layer GRU
+→ Then TodoWrite to track: [implement, test, cuda, benchmark]
 
 User: "Training loss is NaN"
-→ Activate: /debug-training
+→ SlashCommand: /debug-training
 
 User: "Make the attention layer faster"
-→ Activate: /benchmark attention, then /add-cuda attention
+→ SlashCommand: /benchmark attention
+→ Then: /add-cuda attention
 
 User: "Add support for audio transcription"
-→ Activate: /coordinate, then follow multi-step workflow
+→ SlashCommand: /coordinate
+→ Creates TodoWrite task list
+→ Then invoke each command from the plan
 ```
 
-## Available Agents
+## Available Slash Commands
 
-Use these slash commands for specialized tasks. Agents can reference each other and work together.
+Use these slash commands for specialized guidance. Each command expands into context-specific instructions.
+Invoke using: `SlashCommand tool` with `command: "/command-name argument"`
 
 ### Core Development
 - `/add-layer` - Add a new neural network layer type

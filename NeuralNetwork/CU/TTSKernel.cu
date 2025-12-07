@@ -600,3 +600,231 @@ extern "C" __global__ void Conv1DBackwardInput(
 
     gradInput[t * inChannels + ic] = sum;
 }
+
+// Embedding backward - accumulate gradients into embedding table
+extern "C" __global__ void EmbeddingBackward(
+    const int* tokens,           // [seqLen]
+    const float* gradOutput,     // [seqLen, embedDim]
+    float* gradEmbeddings,       // [vocabSize, embedDim] - accumulated
+    int seqLen,
+    int embedDim)
+{
+    int t = blockIdx.x;
+    int d = threadIdx.x;
+    if (t >= seqLen || d >= embedDim) return;
+
+    int tokenId = tokens[t];
+    atomicAdd(&gradEmbeddings[tokenId * embedDim + d], gradOutput[t * embedDim + d]);
+}
+
+// LSTM backward - backprop through LSTM cell
+extern "C" __global__ void LSTMStepBackward(
+    const float* gradH,          // [hiddenDim] - gradient from next layer
+    const float* gradCNext,      // [hiddenDim] - gradient from next timestep
+    const float* gates,          // [hiddenDim * 4] - saved from forward
+    const float* prevC,          // [hiddenDim]
+    const float* newC,           // [hiddenDim]
+    const float* prevH,          // [hiddenDim]
+    const float* input,          // [inputDim]
+    const float* weightsIh,      // [inputDim, hiddenDim * 4]
+    const float* weightsHh,      // [hiddenDim, hiddenDim * 4]
+    float* gradInput,            // [inputDim]
+    float* gradPrevH,            // [hiddenDim]
+    float* gradPrevC,            // [hiddenDim]
+    float* gradWeightsIh,        // [inputDim, hiddenDim * 4]
+    float* gradWeightsHh,        // [hiddenDim, hiddenDim * 4]
+    float* gradBias,             // [hiddenDim * 4]
+    int inputDim,
+    int hiddenDim)
+{
+    int h = blockIdx.x * blockDim.x + threadIdx.x;
+    if (h >= hiddenDim) return;
+
+    // Retrieve gate values (after sigmoid/tanh)
+    float i_t = gates[h];
+    float f_t = gates[hiddenDim + h];
+    float g_t = gates[2 * hiddenDim + h];
+    float o_t = gates[3 * hiddenDim + h];
+
+    float c_new = newC[h];
+    float tanh_c = tanhf(c_new);
+
+    // Gradient of output
+    float dh = gradH[h];
+    float dc = gradCNext[h];
+
+    // Backprop through output gate
+    dc += dh * o_t * (1.0f - tanh_c * tanh_c);  // through tanh
+    float do_t = dh * tanh_c;
+
+    // Backprop through cell update
+    float di_t = dc * g_t;
+    float df_t = dc * prevC[h];
+    float dg_t = dc * i_t;
+
+    // Gradient to previous cell state
+    gradPrevC[h] = dc * f_t;
+
+    // Backprop through gate activations
+    float di_raw = di_t * i_t * (1.0f - i_t);  // sigmoid derivative
+    float df_raw = df_t * f_t * (1.0f - f_t);
+    float dg_raw = dg_t * (1.0f - g_t * g_t);  // tanh derivative
+    float do_raw = do_t * o_t * (1.0f - o_t);
+
+    // Accumulate bias gradients
+    atomicAdd(&gradBias[h], di_raw);
+    atomicAdd(&gradBias[hiddenDim + h], df_raw);
+    atomicAdd(&gradBias[2 * hiddenDim + h], dg_raw);
+    atomicAdd(&gradBias[3 * hiddenDim + h], do_raw);
+
+    // Compute gradient w.r.t. previous hidden state
+    float dh_prev = 0.0f;
+    for (int hh = 0; hh < hiddenDim; hh++)
+    {
+        float dgate_i = (hh == h) ? di_raw : 0;
+        float dgate_f = (hh == h) ? df_raw : 0;
+        float dgate_g = (hh == h) ? dg_raw : 0;
+        float dgate_o = (hh == h) ? do_raw : 0;
+
+        dh_prev += weightsHh[h * hiddenDim * 4 + hh] * dgate_i;
+        dh_prev += weightsHh[h * hiddenDim * 4 + hiddenDim + hh] * dgate_f;
+        dh_prev += weightsHh[h * hiddenDim * 4 + 2 * hiddenDim + hh] * dgate_g;
+        dh_prev += weightsHh[h * hiddenDim * 4 + 3 * hiddenDim + hh] * dgate_o;
+    }
+    gradPrevH[h] = dh_prev;
+}
+
+// Prenet backward - backprop through prenet layer
+extern "C" __global__ void PrenetBackward(
+    const float* gradOutput,     // [outputDim]
+    const float* output,         // [outputDim] - saved from forward (after ReLU)
+    const float* input,          // [inputDim]
+    const float* weights,        // [inputDim, outputDim]
+    float* gradInput,            // [inputDim]
+    float* gradWeights,          // [inputDim, outputDim]
+    float* gradBias,             // [outputDim]
+    int inputDim,
+    int outputDim)
+{
+    int o = blockIdx.x * blockDim.x + threadIdx.x;
+    if (o >= outputDim) return;
+
+    // ReLU backward
+    float grad = (output[o] > 0) ? gradOutput[o] : 0;
+
+    // Bias gradient
+    atomicAdd(&gradBias[o], grad);
+
+    // Weight gradients
+    for (int i = 0; i < inputDim; i++)
+    {
+        atomicAdd(&gradWeights[i * outputDim + o], input[i] * grad);
+    }
+}
+
+// Mel loss gradient - MSE derivative
+extern "C" __global__ void MelLossGradient(
+    const float* predicted,      // [frames, melBins]
+    const float* target,         // [frames, melBins]
+    float* gradient,             // [frames, melBins]
+    int totalSize)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= totalSize) return;
+
+    // MSE gradient: 2 * (predicted - target) / N
+    gradient[idx] = 2.0f * (predicted[idx] - target[idx]) / (float)totalSize;
+}
+
+// Attention backward - backprop through attention mechanism
+extern "C" __global__ void AttentionBackward(
+    const float* gradContext,    // [encoderDim]
+    const float* attnWeights,    // [encoderLen]
+    const float* encoderOutput,  // [encoderLen, encoderDim]
+    float* gradAttnWeights,      // [encoderLen]
+    float* gradEncoderOutput,    // [encoderLen, encoderDim]
+    int encoderLen,
+    int encoderDim)
+{
+    int e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= encoderLen) return;
+
+    // Gradient w.r.t. attention weights
+    float gradWeight = 0.0f;
+    for (int d = 0; d < encoderDim; d++)
+    {
+        gradWeight += gradContext[d] * encoderOutput[e * encoderDim + d];
+    }
+    gradAttnWeights[e] = gradWeight;
+
+    // Gradient w.r.t. encoder output
+    for (int d = 0; d < encoderDim; d++)
+    {
+        atomicAdd(&gradEncoderOutput[e * encoderDim + d], gradContext[d] * attnWeights[e]);
+    }
+}
+
+// Softmax backward - backprop through softmax activation
+extern "C" __global__ void SoftmaxBackward(
+    const float* gradOutput,     // [n]
+    const float* softmaxOutput,  // [n]
+    float* gradInput,            // [n]
+    int n)
+{
+    extern __shared__ float shared[];
+    int tid = threadIdx.x;
+
+    // Compute dot product: sum(gradOutput * softmaxOutput)
+    float localDot = 0.0f;
+    for (int i = tid; i < n; i += blockDim.x)
+    {
+        localDot += gradOutput[i] * softmaxOutput[i];
+    }
+    shared[tid] = localDot;
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if (tid < stride) shared[tid] += shared[tid + stride];
+        __syncthreads();
+    }
+    float dotProduct = shared[0];
+    __syncthreads();
+
+    // Compute gradient: softmax * (gradOutput - dotProduct)
+    for (int i = tid; i < n; i += blockDim.x)
+    {
+        gradInput[i] = softmaxOutput[i] * (gradOutput[i] - dotProduct);
+    }
+}
+
+// Adam optimizer update
+extern "C" __global__ void AdamUpdate(
+    float* params,               // Parameters to update
+    const float* gradients,      // Gradients
+    float* m,                    // First moment
+    float* v,                    // Second moment
+    float lr,                    // Learning rate
+    float beta1,                 // Beta1 (0.9)
+    float beta2,                 // Beta2 (0.999)
+    float epsilon,               // Epsilon (1e-8)
+    float beta1_t,               // beta1^t
+    float beta2_t,               // beta2^t
+    int size)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+
+    float g = gradients[idx];
+
+    // Update moments
+    m[idx] = beta1 * m[idx] + (1.0f - beta1) * g;
+    v[idx] = beta2 * v[idx] + (1.0f - beta2) * g * g;
+
+    // Bias correction
+    float m_hat = m[idx] / (1.0f - beta1_t);
+    float v_hat = v[idx] / (1.0f - beta2_t);
+
+    // Update parameters
+    params[idx] -= lr * m_hat / (sqrtf(v_hat) + epsilon);
+}

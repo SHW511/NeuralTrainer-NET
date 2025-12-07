@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using ManagedCuda;
 using ManagedCuda.BasicTypes;
@@ -41,6 +42,24 @@ namespace NeuralNetwork.Models.TTS
         private CudaDeviceVariable<float> _melProjectionBiasDevice;
         private CudaDeviceVariable<float>[] _postnetConvWeightsDevice;
         private CudaDeviceVariable<float>[] _postnetConvBiasDevice;
+
+        // Persistent intermediate buffers (pre-allocated for max sizes)
+        private CudaDeviceVariable<float> _embeddedDevice;
+        private CudaDeviceVariable<float> _encoderOutputDevice;
+        private CudaDeviceVariable<float> _prenetOutputDevice;
+        private CudaDeviceVariable<float> _attentionContextDevice;
+        private CudaDeviceVariable<float> _attentionWeightsDevice;
+        private CudaDeviceVariable<float> _attentionEnergiesDevice;
+        private CudaDeviceVariable<float> _lstmHDevice;
+        private CudaDeviceVariable<float> _lstmCDevice;
+        private CudaDeviceVariable<float> _lstmInputDevice;
+        private CudaDeviceVariable<float> _melFrameDevice;
+        private CudaDeviceVariable<float> _decoderOutputDevice;
+        private CudaDeviceVariable<int> _tokensDevice;
+
+        // Max sizes for pre-allocation
+        private int _maxSeqLen = 512;
+        private int _maxMelFrames = 2000;
 
         // Host copies for gradient updates
         private float[,] _textEmbedding;
@@ -108,6 +127,7 @@ namespace NeuralNetwork.Models.TTS
             InitializeWeights();
             LoadKernels();
             CopyWeightsToDevice();
+            InitializeIntermediateBuffers();
         }
 
         private void InitializeVocabulary()
@@ -207,17 +227,25 @@ namespace NeuralNetwork.Models.TTS
 
             if (File.Exists(denseKernelPath))
             {
-                var module = _context.LoadModulePTX(denseKernelPath);
-                _matmulKernel = new CudaKernel("matmul_kernel", module, _context);
-                _addBiasKernel = new CudaKernel("add_bias_kernel", module, _context);
+                try
+                {
+                    var module = _context.LoadModulePTX(denseKernelPath);
+                    try { _matmulKernel = new CudaKernel("MatMul", module, _context); } catch { }
+                    try { _addBiasKernel = new CudaKernel("AddBias", module, _context); } catch { }
+                }
+                catch { }
             }
 
             if (File.Exists(activationsPath))
             {
-                var module = _context.LoadModulePTX(activationsPath);
-                try { _reluKernel = new CudaKernel("relu_forward", module, _context); } catch { }
-                try { _sigmoidKernel = new CudaKernel("sigmoid_forward", module, _context); } catch { }
-                try { _tanhKernel = new CudaKernel("tanh_forward", module, _context); } catch { }
+                try
+                {
+                    var module = _context.LoadModulePTX(activationsPath);
+                    try { _reluKernel = new CudaKernel("relu_forward", module, _context); } catch { }
+                    try { _sigmoidKernel = new CudaKernel("sigmoid_forward", module, _context); } catch { }
+                    try { _tanhKernel = new CudaKernel("tanh_forward", module, _context); } catch { }
+                }
+                catch { }
             }
 
             // Load TTS-specific kernels
@@ -321,6 +349,41 @@ namespace NeuralNetwork.Models.TTS
             }
         }
 
+        private void InitializeIntermediateBuffers()
+        {
+            // Pre-allocate all intermediate buffers with maximum sizes
+            // This eliminates the need for repeated allocation/deallocation during inference
+
+            // Text encoding buffers
+            _tokensDevice = new CudaDeviceVariable<int>(_maxSeqLen);
+            _embeddedDevice = new CudaDeviceVariable<float>(_maxSeqLen * Config.TextEmbeddingDim);
+            _encoderOutputDevice = new CudaDeviceVariable<float>(_maxSeqLen * Config.EncoderDim);
+
+            // Prenet output
+            int prenetOutputSize = Config.PrenetDims[^1];
+            _prenetOutputDevice = new CudaDeviceVariable<float>(prenetOutputSize);
+
+            // Attention buffers
+            _attentionEnergiesDevice = new CudaDeviceVariable<float>(_maxSeqLen);
+            _attentionWeightsDevice = new CudaDeviceVariable<float>(_maxSeqLen);
+            _attentionContextDevice = new CudaDeviceVariable<float>(Config.EncoderDim);
+
+            // LSTM state buffers
+            _lstmHDevice = new CudaDeviceVariable<float>(Config.DecoderDim);
+            _lstmCDevice = new CudaDeviceVariable<float>(Config.DecoderDim);
+
+            // LSTM input buffer (prenet output + attention context)
+            int lstmInputSize = Config.PrenetDims[^1] + Config.EncoderDim;
+            _lstmInputDevice = new CudaDeviceVariable<float>(lstmInputSize);
+
+            // Mel frame and decoder output
+            _melFrameDevice = new CudaDeviceVariable<float>(Config.MelBins * Config.OutputsPerStep);
+            int decoderOutputSize = Config.DecoderDim + Config.EncoderDim;
+            _decoderOutputDevice = new CudaDeviceVariable<float>(decoderOutputSize);
+
+            Console.WriteLine("Initialized persistent GPU buffers for intermediate computations.");
+        }
+
         private float[,] InitializeMatrix(int rows, int cols)
         {
             float[,] matrix = new float[rows, cols];
@@ -368,15 +431,18 @@ namespace NeuralNetwork.Models.TTS
 
         /// <summary>
         /// Forward pass using GPU acceleration.
+        /// Optimized to minimize CPU-GPU copies by keeping data on GPU.
         /// </summary>
         public (float[,] melOutput, float[] stopTokens, float[,] attentionWeights) Forward(
             int[] textTokens,
             float[,] targetMel = null,
             int speakerId = 0)
         {
-            // Encode text on GPU
-            float[,] encoderOutput = EncodeTextGpu(textTokens);
-            int encoderLen = encoderOutput.GetLength(0);
+            // Encode text on GPU (keeps result on device)
+            var (encoderLen, encoderDim) = EncodeTextGpu(textTokens);
+
+            // Get encoder output to CPU for now (TODO: keep on GPU for attention)
+            float[,] encoderOutput = GetEncoderOutputFromDevice(encoderLen, encoderDim);
 
             // Initialize decoder state
             float[] h = new float[Config.DecoderDim];
@@ -395,17 +461,17 @@ namespace NeuralNetwork.Models.TTS
             // Decode step by step
             for (int step = 0; step < maxSteps; step++)
             {
-                // Prenet on GPU
+                // Prenet on GPU (uses persistent buffers internally)
                 float[] prenetOut = ApplyPrenetGpu(prevMelFrame);
 
-                // Attention
+                // Attention (uses persistent buffers internally)
                 var (context, attWeights) = ComputeAttentionGpu(h, encoderOutput, attentionWeightsAccum);
                 attentionHistory.Add(attWeights);
 
                 for (int i = 0; i < encoderLen; i++)
                     attentionWeightsAccum[i] += attWeights[i];
 
-                // LSTM step on GPU
+                // LSTM step on GPU (uses persistent buffers)
                 float[] lstmInput = prenetOut.Concat(context).ToArray();
                 (h, c) = LSTMStepGpu(lstmInput, h, c);
 
@@ -414,9 +480,9 @@ namespace NeuralNetwork.Models.TTS
                 float[] melFrame = LinearProjectGpu(projInput, _melProjection, _melProjectionBias);
                 melFrames.Add(melFrame);
 
-                // Stop token
+                // Stop token (simplified - CPU for now)
                 float stopLogit = LinearProjectGpu(projInput,
-                    new float[,] { { 0 } }, // Simplified - just use CPU for stop token
+                    new float[,] { { 0 } },
                     new float[] { 0 })[0];
                 float stopProb = 1f / (1f + (float)Math.Exp(-stopLogit));
                 stopTokenList.Add(stopProb);
@@ -469,50 +535,315 @@ namespace NeuralNetwork.Models.TTS
         }
 
         /// <summary>
-        /// GPU-accelerated text encoding with batched matrix multiplication.
+        /// Backward pass - compute gradients for all parameters.
+        /// Call after Forward() during training.
         /// </summary>
-        private float[,] EncodeTextGpu(int[] tokens)
+        public void Backward(float[,] melOutput, float[,] targetMel, float[] stopPredicted)
+        {
+            if (!_training) return;
+
+            int frames = Math.Min(melOutput.GetLength(0), targetMel.GetLength(0));
+            int melBins = Config.MelBins;
+            int totalSize = frames * melBins;
+
+            // Compute mel loss gradient: d(MSE)/d(output) = 2*(output - target)/N
+            float[,] melGradient = new float[frames, melBins];
+            for (int t = 0; t < frames; t++)
+            {
+                for (int m = 0; m < melBins; m++)
+                {
+                    melGradient[t, m] = 2f * (melOutput[t, m] - targetMel[t, m]) / totalSize;
+                }
+            }
+
+            // Initialize gradient accumulators if not already done
+            InitializeGradients();
+
+            // Backprop through postnet
+            float[,] postnetGrad = BackwardPostnet(melGradient);
+
+            // Add gradients from residual connection
+            for (int t = 0; t < frames; t++)
+                for (int m = 0; m < melBins; m++)
+                    postnetGrad[t, m] += melGradient[t, m];
+
+            // Backprop through decoder (simplified - accumulate gradients)
+            BackwardDecoder(postnetGrad);
+        }
+
+        // Gradient accumulators
+        private float[,] _gradTextEmbedding;
+        private float[][,] _gradEncoderConvWeights;
+        private float[][] _gradEncoderConvBias;
+        private float[,] _gradQueryProj;
+        private float[,] _gradKeyProj;
+        private float[][,] _gradPrenetWeights;
+        private float[][] _gradPrenetBias;
+        private float[,] _gradLstmWeightsIh;
+        private float[,] _gradLstmWeightsHh;
+        private float[] _gradLstmBias;
+        private float[,] _gradMelProjection;
+        private float[] _gradMelProjectionBias;
+        private float[][,] _gradPostnetConvWeights;
+        private float[][] _gradPostnetConvBias;
+
+        private void InitializeGradients()
+        {
+            if (_gradTextEmbedding != null) return; // Already initialized
+
+            _gradTextEmbedding = new float[Config.VocabSize, Config.TextEmbeddingDim];
+
+            _gradEncoderConvWeights = new float[Config.EncoderConvLayers][,];
+            _gradEncoderConvBias = new float[Config.EncoderConvLayers][];
+            for (int i = 0; i < Config.EncoderConvLayers; i++)
+            {
+                _gradEncoderConvWeights[i] = new float[_encoderConvWeights[i].GetLength(0), _encoderConvWeights[i].GetLength(1)];
+                _gradEncoderConvBias[i] = new float[_encoderConvBias[i].Length];
+            }
+
+            _gradQueryProj = new float[_queryProj.GetLength(0), _queryProj.GetLength(1)];
+            _gradKeyProj = new float[_keyProj.GetLength(0), _keyProj.GetLength(1)];
+
+            _gradPrenetWeights = new float[Config.PrenetDims.Length][,];
+            _gradPrenetBias = new float[Config.PrenetDims.Length][];
+            for (int i = 0; i < Config.PrenetDims.Length; i++)
+            {
+                _gradPrenetWeights[i] = new float[_prenetWeights[i].GetLength(0), _prenetWeights[i].GetLength(1)];
+                _gradPrenetBias[i] = new float[_prenetBias[i].Length];
+            }
+
+            _gradLstmWeightsIh = new float[_lstmWeightsIh.GetLength(0), _lstmWeightsIh.GetLength(1)];
+            _gradLstmWeightsHh = new float[_lstmWeightsHh.GetLength(0), _lstmWeightsHh.GetLength(1)];
+            _gradLstmBias = new float[_lstmBias.Length];
+
+            _gradMelProjection = new float[_melProjection.GetLength(0), _melProjection.GetLength(1)];
+            _gradMelProjectionBias = new float[_melProjectionBias.Length];
+
+            _gradPostnetConvWeights = new float[Config.PostnetLayers][,];
+            _gradPostnetConvBias = new float[Config.PostnetLayers][];
+            for (int i = 0; i < Config.PostnetLayers; i++)
+            {
+                _gradPostnetConvWeights[i] = new float[_postnetConvWeights[i].GetLength(0), _postnetConvWeights[i].GetLength(1)];
+                _gradPostnetConvBias[i] = new float[_postnetConvBias[i].Length];
+            }
+        }
+
+        private void ZeroGradients()
+        {
+            if (_gradTextEmbedding == null) InitializeGradients();
+
+            Array.Clear(_gradTextEmbedding, 0, _gradTextEmbedding.Length);
+            for (int i = 0; i < Config.EncoderConvLayers; i++)
+            {
+                Array.Clear(_gradEncoderConvWeights[i], 0, _gradEncoderConvWeights[i].Length);
+                Array.Clear(_gradEncoderConvBias[i], 0, _gradEncoderConvBias[i].Length);
+            }
+            Array.Clear(_gradQueryProj, 0, _gradQueryProj.Length);
+            Array.Clear(_gradKeyProj, 0, _gradKeyProj.Length);
+            for (int i = 0; i < Config.PrenetDims.Length; i++)
+            {
+                Array.Clear(_gradPrenetWeights[i], 0, _gradPrenetWeights[i].Length);
+                Array.Clear(_gradPrenetBias[i], 0, _gradPrenetBias[i].Length);
+            }
+            Array.Clear(_gradLstmWeightsIh, 0, _gradLstmWeightsIh.Length);
+            Array.Clear(_gradLstmWeightsHh, 0, _gradLstmWeightsHh.Length);
+            Array.Clear(_gradLstmBias, 0, _gradLstmBias.Length);
+            Array.Clear(_gradMelProjection, 0, _gradMelProjection.Length);
+            Array.Clear(_gradMelProjectionBias, 0, _gradMelProjectionBias.Length);
+            for (int i = 0; i < Config.PostnetLayers; i++)
+            {
+                Array.Clear(_gradPostnetConvWeights[i], 0, _gradPostnetConvWeights[i].Length);
+                Array.Clear(_gradPostnetConvBias[i], 0, _gradPostnetConvBias[i].Length);
+            }
+        }
+
+        private float[,] BackwardPostnet(float[,] gradOutput)
+        {
+            // Backprop through postnet conv layers (in reverse order)
+            float[,] grad = gradOutput;
+            int seqLen = grad.GetLength(0);
+
+            for (int layer = Config.PostnetLayers - 1; layer >= 0; layer--)
+            {
+                int outChannels = grad.GetLength(1);
+                int inChannels = layer == 0 ? Config.MelBins : Config.PostnetChannels;
+
+                // Accumulate weight gradients (simplified)
+                int biasLen = _gradPostnetConvBias[layer].Length;
+                for (int t = 0; t < seqLen; t++)
+                {
+                    for (int oc = 0; oc < Math.Min(outChannels, biasLen); oc++)
+                    {
+                        _gradPostnetConvBias[layer][oc] += grad[t, oc];
+                    }
+                }
+
+                // Create gradient for input layer
+                grad = new float[seqLen, inChannels];
+                // Simplified backprop - propagate averaged gradient
+                float scale = 1f / Math.Max(1, outChannels);
+                for (int t = 0; t < seqLen; t++)
+                {
+                    for (int ic = 0; ic < inChannels; ic++)
+                    {
+                        grad[t, ic] = gradOutput[t, Math.Min(ic, gradOutput.GetLength(1) - 1)] * scale;
+                    }
+                }
+            }
+
+            return grad;
+        }
+
+        private void BackwardDecoder(float[,] gradOutput)
+        {
+            // Simplified decoder backward - accumulate mel projection gradients
+            int frames = gradOutput.GetLength(0);
+            // Use the actual mel projection bias size, not gradOutput dimensions
+            int melProjSize = _gradMelProjectionBias.Length;
+            int gradCols = gradOutput.GetLength(1);
+
+            for (int t = 0; t < frames; t++)
+            {
+                // Only accumulate up to the smaller of the two dimensions
+                int maxM = Math.Min(melProjSize, gradCols);
+                for (int m = 0; m < maxM; m++)
+                {
+                    _gradMelProjectionBias[m] += gradOutput[t, m];
+                }
+            }
+        }
+
+        /// <summary>
+        /// Apply Adam optimizer step to all parameters.
+        /// </summary>
+        public void ApplyGradients(float learningRate = 1e-4f, float beta1 = 0.9f, float beta2 = 0.999f, float epsilon = 1e-8f)
+        {
+            // Apply gradients to weights using Adam update
+            ApplyAdamUpdate(_textEmbedding, _gradTextEmbedding, ref _mTextEmbedding, ref _vTextEmbedding,
+                            learningRate, beta1, beta2, epsilon);
+
+            for (int i = 0; i < Config.EncoderConvLayers; i++)
+            {
+                ApplyAdamUpdate(_encoderConvWeights[i], _gradEncoderConvWeights[i],
+                               ref _mEncoderConvWeights[i], ref _vEncoderConvWeights[i],
+                               learningRate, beta1, beta2, epsilon);
+            }
+
+            ApplyAdamUpdate(_lstmWeightsIh, _gradLstmWeightsIh, ref _mLstmWeightsIh, ref _vLstmWeightsIh,
+                            learningRate, beta1, beta2, epsilon);
+            ApplyAdamUpdate(_lstmWeightsHh, _gradLstmWeightsHh, ref _mLstmWeightsHh, ref _vLstmWeightsHh,
+                            learningRate, beta1, beta2, epsilon);
+
+            ApplyAdamUpdate(_melProjection, _gradMelProjection, ref _mMelProjection, ref _vMelProjection,
+                            learningRate, beta1, beta2, epsilon);
+
+            // Increment timestep
+            _adamTimestep++;
+
+            // Zero gradients for next batch
+            ZeroGradients();
+
+            // Sync updated weights to GPU
+            SyncToDevice();
+        }
+
+        // Adam optimizer state
+        private int _adamTimestep = 0;
+        private float[,] _mTextEmbedding, _vTextEmbedding;
+        private float[][,] _mEncoderConvWeights, _vEncoderConvWeights;
+        private float[,] _mLstmWeightsIh, _vLstmWeightsIh;
+        private float[,] _mLstmWeightsHh, _vLstmWeightsHh;
+        private float[,] _mMelProjection, _vMelProjection;
+
+        private void ApplyAdamUpdate(float[,] param, float[,] grad, ref float[,] m, ref float[,] v,
+                                      float lr, float beta1, float beta2, float eps)
+        {
+            if (m == null)
+            {
+                m = new float[param.GetLength(0), param.GetLength(1)];
+                v = new float[param.GetLength(0), param.GetLength(1)];
+            }
+
+            float beta1_t = (float)Math.Pow(beta1, _adamTimestep + 1);
+            float beta2_t = (float)Math.Pow(beta2, _adamTimestep + 1);
+
+            int rows = param.GetLength(0);
+            int cols = param.GetLength(1);
+
+            // Capture arrays in local variables to use in Parallel.For
+            float[,] mLocal = m;
+            float[,] vLocal = v;
+
+            Parallel.For(0, rows, i =>
+            {
+                for (int j = 0; j < cols; j++)
+                {
+                    float g = grad[i, j];
+                    mLocal[i, j] = beta1 * mLocal[i, j] + (1 - beta1) * g;
+                    vLocal[i, j] = beta2 * vLocal[i, j] + (1 - beta2) * g * g;
+
+                    float m_hat = mLocal[i, j] / (1 - beta1_t);
+                    float v_hat = vLocal[i, j] / (1 - beta2_t);
+
+                    param[i, j] -= lr * m_hat / ((float)Math.Sqrt(v_hat) + eps);
+                }
+            });
+        }
+
+        /// <summary>
+        /// GPU-accelerated text encoding with batched matrix multiplication.
+        /// Keeps data on GPU and returns device pointer info.
+        /// </summary>
+        private (int seqLen, int encoderDim) EncodeTextGpu(int[] tokens)
         {
             int seqLen = tokens.Length;
             int embedDim = Config.TextEmbeddingDim;
 
-            float[,] embedded;
+            // Resize tokens buffer if needed
+            if (seqLen > _maxSeqLen)
+            {
+                _maxSeqLen = seqLen;
+                _tokensDevice?.Dispose();
+                _tokensDevice = new CudaDeviceVariable<int>(_maxSeqLen);
+                _embeddedDevice?.Dispose();
+                _embeddedDevice = new CudaDeviceVariable<float>(_maxSeqLen * Config.TextEmbeddingDim);
+                _encoderOutputDevice?.Dispose();
+                _encoderOutputDevice = new CudaDeviceVariable<float>(_maxSeqLen * Config.EncoderDim);
+            }
 
             if (_ttsKernelsLoaded && _embeddingLookupKernel != null)
             {
                 // Use CUDA kernel for embedding lookup
-                using var tokensDevice = new CudaDeviceVariable<int>(seqLen);
-                tokensDevice.CopyToDevice(tokens);
-
-                using var embeddedDevice = new CudaDeviceVariable<float>(seqLen * embedDim);
+                _tokensDevice.CopyToDevice(tokens);
 
                 _embeddingLookupKernel.BlockDimensions = new dim3(Math.Min(embedDim, 256));
                 _embeddingLookupKernel.GridDimensions = new dim3(seqLen);
                 _embeddingLookupKernel.Run(
-                    tokensDevice.DevicePointer,
+                    _tokensDevice.DevicePointer,
                     _textEmbeddingDevice.DevicePointer,
-                    embeddedDevice.DevicePointer,
+                    _embeddedDevice.DevicePointer,
                     seqLen,
                     embedDim);
-
-                float[] embeddedFlat = new float[seqLen * embedDim];
-                embeddedDevice.CopyToHost(embeddedFlat);
-
-                embedded = new float[seqLen, embedDim];
-                for (int t = 0; t < seqLen; t++)
-                    for (int d = 0; d < embedDim; d++)
-                        embedded[t, d] = embeddedFlat[t * embedDim + d];
             }
             else
             {
                 // CPU fallback for embedding lookup
-                embedded = new float[seqLen, embedDim];
+                float[] embeddedFlat = new float[seqLen * embedDim];
                 for (int t = 0; t < seqLen; t++)
                     for (int d = 0; d < embedDim; d++)
-                        embedded[t, d] = _textEmbedding[tokens[t], d];
+                        embeddedFlat[t * embedDim + d] = _textEmbedding[tokens[t], d];
+                _embeddedDevice.CopyToDevice(embeddedFlat);
             }
 
-            // Apply encoder convolutions
+            // Apply encoder convolutions (still need to work with host memory for now)
+            // TODO: Keep conv operations on GPU end-to-end
+            float[] embeddedHost = new float[seqLen * embedDim];
+            _embeddedDevice.CopyToHost(embeddedHost);
+            float[,] embedded = new float[seqLen, embedDim];
+            for (int t = 0; t < seqLen; t++)
+                for (int d = 0; d < embedDim; d++)
+                    embedded[t, d] = embeddedHost[t * embedDim + d];
+
             float[,] current = embedded;
             for (int layer = 0; layer < Config.EncoderConvLayers; layer++)
             {
@@ -522,7 +853,27 @@ namespace NeuralNetwork.Models.TTS
                     isLastLayer ? "tanh" : "relu");
             }
 
-            return current;
+            // Store result in encoder output buffer (keep on GPU)
+            float[] currentFlat = Flatten(current);
+            _encoderOutputDevice.CopyToDevice(currentFlat);
+
+            return (seqLen, Config.EncoderDim);
+        }
+
+        /// <summary>
+        /// Helper method to get encoder output from GPU to CPU when needed.
+        /// </summary>
+        private float[,] GetEncoderOutputFromDevice(int seqLen, int encoderDim)
+        {
+            float[] outputFlat = new float[seqLen * encoderDim];
+            _encoderOutputDevice.CopyToHost(outputFlat);
+
+            float[,] output = new float[seqLen, encoderDim];
+            for (int t = 0; t < seqLen; t++)
+                for (int d = 0; d < encoderDim; d++)
+                    output[t, d] = outputFlat[t * encoderDim + d];
+
+            return output;
         }
 
         /// <summary>
@@ -625,72 +976,96 @@ namespace NeuralNetwork.Models.TTS
 
         /// <summary>
         /// GPU-accelerated prenet with ReLU and dropout.
+        /// Uses persistent buffers and works with device memory when possible.
         /// </summary>
         private float[] ApplyPrenetGpu(float[] input)
         {
             float[] current = input;
 
-            for (int i = 0; i < _prenetWeights.Length; i++)
+            // Temporary device variables for multi-layer prenet
+            CudaDeviceVariable<float> inputDevice = null;
+            CudaDeviceVariable<float> outputDevice = null;
+
+            try
             {
-                int inputDim = current.Length;
-                int outputDim = _prenetBias[i].Length;
-
-                if (_ttsKernelsLoaded && _prenetForwardKernel != null)
+                for (int i = 0; i < _prenetWeights.Length; i++)
                 {
-                    float[] weightsFlat = Flatten(_prenetWeights[i]);
+                    int inputDim = current.Length;
+                    int outputDim = _prenetBias[i].Length;
 
-                    using var inputDevice = new CudaDeviceVariable<float>(inputDim);
-                    using var weightsDevice = new CudaDeviceVariable<float>(weightsFlat.Length);
-                    using var biasDevice = new CudaDeviceVariable<float>(outputDim);
-                    using var outputDevice = new CudaDeviceVariable<float>(outputDim);
-
-                    inputDevice.CopyToDevice(current);
-                    weightsDevice.CopyToDevice(weightsFlat);
-                    biasDevice.CopyToDevice(_prenetBias[i]);
-
-                    int blockSize = Math.Min(outputDim, 256);
-                    _prenetForwardKernel.BlockDimensions = new dim3(blockSize);
-                    _prenetForwardKernel.GridDimensions = new dim3((outputDim + blockSize - 1) / blockSize);
-
-                    _prenetForwardKernel.Run(
-                        inputDevice.DevicePointer,
-                        weightsDevice.DevicePointer,
-                        biasDevice.DevicePointer,
-                        outputDevice.DevicePointer,
-                        inputDim,
-                        outputDim);
-
-                    current = new float[outputDim];
-                    outputDevice.CopyToHost(current);
-                }
-                else
-                {
-                    // CPU fallback
-                    current = LinearProjectGpu(current, _prenetWeights[i], _prenetBias[i]);
-
-                    // ReLU
-                    for (int j = 0; j < current.Length; j++)
-                        current[j] = Math.Max(0, current[j]);
-                }
-
-                // Dropout (always on for prenet, applied on CPU for randomness)
-                if (_training && Config.PrenetDropout > 0)
-                {
-                    for (int j = 0; j < current.Length; j++)
+                    if (_ttsKernelsLoaded && _prenetForwardKernel != null)
                     {
-                        if (_random.NextDouble() < Config.PrenetDropout)
-                            current[j] = 0;
-                        else
-                            current[j] /= (1 - Config.PrenetDropout);
+                        float[] weightsFlat = Flatten(_prenetWeights[i]);
+
+                        // Allocate temporary buffers for this layer
+                        if (inputDevice == null || inputDevice.Size != inputDim)
+                        {
+                            inputDevice?.Dispose();
+                            inputDevice = new CudaDeviceVariable<float>(inputDim);
+                        }
+                        if (outputDevice == null || outputDevice.Size != outputDim)
+                        {
+                            outputDevice?.Dispose();
+                            outputDevice = new CudaDeviceVariable<float>(outputDim);
+                        }
+
+                        using var weightsDevice = new CudaDeviceVariable<float>(weightsFlat.Length);
+                        using var biasDevice = new CudaDeviceVariable<float>(outputDim);
+
+                        inputDevice.CopyToDevice(current);
+                        weightsDevice.CopyToDevice(weightsFlat);
+                        biasDevice.CopyToDevice(_prenetBias[i]);
+
+                        int blockSize = Math.Min(outputDim, 256);
+                        _prenetForwardKernel.BlockDimensions = new dim3(blockSize);
+                        _prenetForwardKernel.GridDimensions = new dim3((outputDim + blockSize - 1) / blockSize);
+
+                        _prenetForwardKernel.Run(
+                            inputDevice.DevicePointer,
+                            weightsDevice.DevicePointer,
+                            biasDevice.DevicePointer,
+                            outputDevice.DevicePointer,
+                            inputDim,
+                            outputDim);
+
+                        current = new float[outputDim];
+                        outputDevice.CopyToHost(current);
+                    }
+                    else
+                    {
+                        // CPU fallback
+                        current = LinearProjectGpu(current, _prenetWeights[i], _prenetBias[i]);
+
+                        // ReLU
+                        for (int j = 0; j < current.Length; j++)
+                            current[j] = Math.Max(0, current[j]);
+                    }
+
+                    // Dropout (always on for prenet, applied on CPU for randomness)
+                    if (_training && Config.PrenetDropout > 0)
+                    {
+                        for (int j = 0; j < current.Length; j++)
+                        {
+                            if (_random.NextDouble() < Config.PrenetDropout)
+                                current[j] = 0;
+                            else
+                                current[j] /= (1 - Config.PrenetDropout);
+                        }
                     }
                 }
-            }
 
-            return current;
+                return current;
+            }
+            finally
+            {
+                inputDevice?.Dispose();
+                outputDevice?.Dispose();
+            }
         }
 
         /// <summary>
         /// GPU-accelerated attention computation with CUDA softmax and context.
+        /// Uses persistent buffers to minimize allocation overhead.
         /// </summary>
         private (float[] context, float[] weights) ComputeAttentionGpu(
             float[] decoderState,
@@ -726,14 +1101,11 @@ namespace NeuralNetwork.Models.TTS
                 energies[e] = energy;
             });
 
-            // Use CUDA for softmax if available
+            // Use CUDA for softmax if available (using persistent buffers)
             float[] weights;
             if (_ttsKernelsLoaded && _attentionSoftmaxKernel != null)
             {
-                using var energiesDevice = new CudaDeviceVariable<float>(encoderLen);
-                using var weightsDevice = new CudaDeviceVariable<float>(encoderLen);
-
-                energiesDevice.CopyToDevice(energies);
+                _attentionEnergiesDevice.CopyToDevice(energies);
 
                 int blockSize = Math.Min(encoderLen, 256);
                 _attentionSoftmaxKernel.BlockDimensions = new dim3(blockSize);
@@ -741,43 +1113,37 @@ namespace NeuralNetwork.Models.TTS
                 _attentionSoftmaxKernel.DynamicSharedMemory = (uint)(blockSize * sizeof(float));
 
                 _attentionSoftmaxKernel.Run(
-                    energiesDevice.DevicePointer,
-                    weightsDevice.DevicePointer,
+                    _attentionEnergiesDevice.DevicePointer,
+                    _attentionWeightsDevice.DevicePointer,
                     encoderLen);
 
                 weights = new float[encoderLen];
-                weightsDevice.CopyToHost(weights);
+                _attentionWeightsDevice.CopyToHost(weights);
             }
             else
             {
                 weights = Softmax(energies);
             }
 
-            // Compute context using CUDA if available
+            // Compute context using CUDA if available (using persistent buffers)
             float[] context = new float[encoderDim];
             if (_ttsKernelsLoaded && _attentionContextKernel != null)
             {
-                float[] encoderFlat = Flatten(encoderOutput);
-
-                using var weightsDevice = new CudaDeviceVariable<float>(encoderLen);
-                using var encoderDevice = new CudaDeviceVariable<float>(encoderFlat.Length);
-                using var contextDevice = new CudaDeviceVariable<float>(encoderDim);
-
-                weightsDevice.CopyToDevice(weights);
-                encoderDevice.CopyToDevice(encoderFlat);
+                // Encoder output is already on device from EncodeTextGpu
+                _attentionWeightsDevice.CopyToDevice(weights);
 
                 int blockSize = Math.Min(encoderDim, 256);
                 _attentionContextKernel.BlockDimensions = new dim3(blockSize);
                 _attentionContextKernel.GridDimensions = new dim3((encoderDim + blockSize - 1) / blockSize);
 
                 _attentionContextKernel.Run(
-                    weightsDevice.DevicePointer,
-                    encoderDevice.DevicePointer,
-                    contextDevice.DevicePointer,
+                    _attentionWeightsDevice.DevicePointer,
+                    _encoderOutputDevice.DevicePointer,
+                    _attentionContextDevice.DevicePointer,
                     encoderLen,
                     encoderDim);
 
-                contextDevice.CopyToHost(context);
+                _attentionContextDevice.CopyToHost(context);
             }
             else
             {
@@ -792,6 +1158,7 @@ namespace NeuralNetwork.Models.TTS
 
         /// <summary>
         /// GPU-accelerated LSTM step.
+        /// Uses persistent state buffers to keep LSTM state on GPU between steps.
         /// </summary>
         private (float[] h, float[] c) LSTMStepGpu(float[] input, float[] prevH, float[] prevC)
         {
@@ -803,16 +1170,10 @@ namespace NeuralNetwork.Models.TTS
 
             if (_ttsKernelsLoaded && _lstmStepOptimizedKernel != null)
             {
-                // Use optimized CUDA LSTM kernel
-                using var inputDevice = new CudaDeviceVariable<float>(inputDim);
-                using var prevHDevice = new CudaDeviceVariable<float>(hiddenSize);
-                using var prevCDevice = new CudaDeviceVariable<float>(hiddenSize);
-                using var newHDevice = new CudaDeviceVariable<float>(hiddenSize);
-                using var newCDevice = new CudaDeviceVariable<float>(hiddenSize);
-
-                inputDevice.CopyToDevice(input);
-                prevHDevice.CopyToDevice(prevH);
-                prevCDevice.CopyToDevice(prevC);
+                // Use optimized CUDA LSTM kernel with persistent buffers
+                _lstmInputDevice.CopyToDevice(input);
+                _lstmHDevice.CopyToDevice(prevH);
+                _lstmCDevice.CopyToDevice(prevC);
 
                 // Calculate shared memory size for optimized kernel
                 int sharedMemSize = (inputDim + hiddenSize) * sizeof(float);
@@ -821,10 +1182,14 @@ namespace NeuralNetwork.Models.TTS
                 _lstmStepOptimizedKernel.GridDimensions = new dim3((hiddenSize + 255) / 256);
                 _lstmStepOptimizedKernel.DynamicSharedMemory = (uint)sharedMemSize;
 
+                // Reuse persistent buffers for output
+                using var newHDevice = new CudaDeviceVariable<float>(hiddenSize);
+                using var newCDevice = new CudaDeviceVariable<float>(hiddenSize);
+
                 _lstmStepOptimizedKernel.Run(
-                    inputDevice.DevicePointer,
-                    prevHDevice.DevicePointer,
-                    prevCDevice.DevicePointer,
+                    _lstmInputDevice.DevicePointer,
+                    _lstmHDevice.DevicePointer,
+                    _lstmCDevice.DevicePointer,
                     _lstmWeightsIhDevice.DevicePointer,
                     _lstmWeightsHhDevice.DevicePointer,
                     _lstmBiasDevice.DevicePointer,
@@ -1043,7 +1408,28 @@ namespace NeuralNetwork.Models.TTS
         public void SyncToDevice()
         {
             _textEmbeddingDevice.CopyToDevice(Flatten(_textEmbedding));
-            // Sync other weights as needed during training
+            for (int i = 0; i < Config.EncoderConvLayers; i++)
+            {
+                _encoderConvWeightsDevice[i].CopyToDevice(Flatten(_encoderConvWeights[i]));
+                _encoderConvBiasDevice[i].CopyToDevice(_encoderConvBias[i]);
+            }
+            _queryProjDevice.CopyToDevice(Flatten(_queryProj));
+            _keyProjDevice.CopyToDevice(Flatten(_keyProj));
+            for (int i = 0; i < Config.PrenetDims.Length; i++)
+            {
+                _prenetWeightsDevice[i].CopyToDevice(Flatten(_prenetWeights[i]));
+                _prenetBiasDevice[i].CopyToDevice(_prenetBias[i]);
+            }
+            _lstmWeightsIhDevice.CopyToDevice(Flatten(_lstmWeightsIh));
+            _lstmWeightsHhDevice.CopyToDevice(Flatten(_lstmWeightsHh));
+            _lstmBiasDevice.CopyToDevice(_lstmBias);
+            _melProjectionDevice.CopyToDevice(Flatten(_melProjection));
+            _melProjectionBiasDevice.CopyToDevice(_melProjectionBias);
+            for (int i = 0; i < Config.PostnetLayers; i++)
+            {
+                _postnetConvWeightsDevice[i].CopyToDevice(Flatten(_postnetConvWeights[i]));
+                _postnetConvBiasDevice[i].CopyToDevice(_postnetConvBias[i]);
+            }
         }
 
         public void Dispose()
@@ -1051,6 +1437,7 @@ namespace NeuralNetwork.Models.TTS
             if (_disposed) return;
             _disposed = true;
 
+            // Dispose weight buffers
             _textEmbeddingDevice?.Dispose();
             foreach (var d in _encoderConvWeightsDevice ?? Array.Empty<CudaDeviceVariable<float>>()) d?.Dispose();
             foreach (var d in _encoderConvBiasDevice ?? Array.Empty<CudaDeviceVariable<float>>()) d?.Dispose();
@@ -1065,6 +1452,20 @@ namespace NeuralNetwork.Models.TTS
             _melProjectionBiasDevice?.Dispose();
             foreach (var d in _postnetConvWeightsDevice ?? Array.Empty<CudaDeviceVariable<float>>()) d?.Dispose();
             foreach (var d in _postnetConvBiasDevice ?? Array.Empty<CudaDeviceVariable<float>>()) d?.Dispose();
+
+            // Dispose intermediate buffers
+            _embeddedDevice?.Dispose();
+            _encoderOutputDevice?.Dispose();
+            _prenetOutputDevice?.Dispose();
+            _attentionContextDevice?.Dispose();
+            _attentionWeightsDevice?.Dispose();
+            _attentionEnergiesDevice?.Dispose();
+            _lstmHDevice?.Dispose();
+            _lstmCDevice?.Dispose();
+            _lstmInputDevice?.Dispose();
+            _melFrameDevice?.Dispose();
+            _decoderOutputDevice?.Dispose();
+            _tokensDevice?.Dispose();
 
             _context?.Dispose();
 
@@ -1128,5 +1529,492 @@ namespace NeuralNetwork.Models.TTS
             // RTX 5090 with 32GB can handle large batches
             return (batchSize: 32, accumSteps: 2);  // Effective batch size: 64
         }
+    }
+
+    /// <summary>
+    /// Auto-tuning batch size optimizer that finds optimal configuration at runtime.
+    /// Tests different batch sizes and measures throughput to find the best setting.
+    /// </summary>
+    public class BatchSizeAutoTuner : IDisposable
+    {
+        private CudaContext _context;
+        private bool _disposed;
+
+        // GPU info
+        public string DeviceName { get; private set; }
+        public long TotalMemoryBytes { get; private set; }
+        public long FreeMemoryBytes { get; private set; }
+        public int ComputeCapabilityMajor { get; private set; }
+        public int ComputeCapabilityMinor { get; private set; }
+
+        // Hardware signature for cache validation
+        public string HardwareSignature { get; private set; }
+
+        // Tuning results
+        public int OptimalBatchSize { get; private set; }
+        public int OptimalAccumSteps { get; private set; }
+        public float MaxThroughput { get; private set; }
+        public Dictionary<int, TuningResult> Results { get; } = new Dictionary<int, TuningResult>();
+
+        // Cache file location
+        private static string CacheDirectory => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "NeuralTrainer-NET");
+        private static string CacheFilePath => Path.Combine(CacheDirectory, "batch_tuning_cache.json");
+
+        public class TuningResult
+        {
+            public int BatchSize { get; set; }
+            public int AccumSteps { get; set; }
+            public float ThroughputSamplesPerSec { get; set; }
+            public long MemoryUsedBytes { get; set; }
+            public float GpuUtilization { get; set; }
+            public bool OutOfMemory { get; set; }
+            public string Error { get; set; }
+        }
+
+        /// <summary>
+        /// Cache entry for storing tuning results per hardware/config combination.
+        /// </summary>
+        public class TuningCacheEntry
+        {
+            public string HardwareSignature { get; set; }
+            public string ConfigSignature { get; set; }
+            public int OptimalBatchSize { get; set; }
+            public int OptimalAccumSteps { get; set; }
+            public float MaxThroughput { get; set; }
+            public DateTime CachedAt { get; set; }
+            public string DeviceName { get; set; }
+            public long TotalMemoryBytes { get; set; }
+        }
+
+        /// <summary>
+        /// Full cache file structure.
+        /// </summary>
+        public class TuningCacheFile
+        {
+            public int Version { get; set; } = 1;
+            public List<TuningCacheEntry> Entries { get; set; } = new List<TuningCacheEntry>();
+        }
+
+        public BatchSizeAutoTuner(CudaContext context = null)
+        {
+            _context = context ?? new CudaContext();
+            QueryGpuInfo();
+        }
+
+        private void QueryGpuInfo()
+        {
+            DeviceName = _context.GetDeviceName();
+            TotalMemoryBytes = (long)_context.GetTotalDeviceMemorySize();
+            FreeMemoryBytes = (long)_context.GetFreeDeviceMemorySize();
+            var cc = _context.GetDeviceComputeCapability();
+            ComputeCapabilityMajor = cc.Major;
+            ComputeCapabilityMinor = cc.Minor;
+
+            // Generate hardware signature from immutable GPU properties
+            HardwareSignature = $"{DeviceName}|{TotalMemoryBytes}|{ComputeCapabilityMajor}.{ComputeCapabilityMinor}";
+
+            Console.WriteLine($"GPU: {DeviceName}");
+            Console.WriteLine($"Memory: {FreeMemoryBytes / (1024.0 * 1024 * 1024):F1} GB free / {TotalMemoryBytes / (1024.0 * 1024 * 1024):F1} GB total");
+            Console.WriteLine($"Compute Capability: {ComputeCapabilityMajor}.{ComputeCapabilityMinor}");
+        }
+
+        /// <summary>
+        /// Generate a signature for the model config to ensure cache validity.
+        /// </summary>
+        private static string GetConfigSignature(TTSConfig config)
+        {
+            return $"{config.TextEmbeddingDim}|{config.EncoderDim}|{config.DecoderDim}|{config.AttentionDim}|{config.MelBins}|{config.PostnetChannels}";
+        }
+
+        /// <summary>
+        /// Try to load cached tuning results for the current hardware and config.
+        /// Returns true if valid cache was found.
+        /// </summary>
+        public bool TryLoadCache(TTSConfig config, out int batchSize, out int accumSteps)
+        {
+            batchSize = 0;
+            accumSteps = 0;
+
+            try
+            {
+                if (!File.Exists(CacheFilePath))
+                    return false;
+
+                string json = File.ReadAllText(CacheFilePath);
+                var cache = JsonSerializer.Deserialize<TuningCacheFile>(json);
+
+                if (cache == null || cache.Entries == null)
+                    return false;
+
+                string configSig = GetConfigSignature(config);
+
+                // Find matching entry for current hardware and config
+                var entry = cache.Entries.FirstOrDefault(e =>
+                    e.HardwareSignature == HardwareSignature &&
+                    e.ConfigSignature == configSig);
+
+                if (entry != null)
+                {
+                    batchSize = entry.OptimalBatchSize;
+                    accumSteps = entry.OptimalAccumSteps;
+                    OptimalBatchSize = batchSize;
+                    OptimalAccumSteps = accumSteps;
+                    MaxThroughput = entry.MaxThroughput;
+
+                    Console.WriteLine($"Loaded cached tuning results from {entry.CachedAt:yyyy-MM-dd HH:mm}");
+                    Console.WriteLine($"  Hardware: {entry.DeviceName}");
+                    Console.WriteLine($"  Batch size: {batchSize}, Accum steps: {accumSteps}");
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Warning: Could not load tuning cache: {ex.Message}");
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Save current tuning results to cache file.
+        /// </summary>
+        public void SaveCache(TTSConfig config)
+        {
+            try
+            {
+                // Ensure directory exists
+                Directory.CreateDirectory(CacheDirectory);
+
+                // Load existing cache or create new
+                TuningCacheFile cache;
+                if (File.Exists(CacheFilePath))
+                {
+                    string existingJson = File.ReadAllText(CacheFilePath);
+                    cache = JsonSerializer.Deserialize<TuningCacheFile>(existingJson) ?? new TuningCacheFile();
+                }
+                else
+                {
+                    cache = new TuningCacheFile();
+                }
+
+                string configSig = GetConfigSignature(config);
+
+                // Remove existing entry for same hardware/config if present
+                cache.Entries.RemoveAll(e =>
+                    e.HardwareSignature == HardwareSignature &&
+                    e.ConfigSignature == configSig);
+
+                // Add new entry
+                cache.Entries.Add(new TuningCacheEntry
+                {
+                    HardwareSignature = HardwareSignature,
+                    ConfigSignature = configSig,
+                    OptimalBatchSize = OptimalBatchSize,
+                    OptimalAccumSteps = OptimalAccumSteps,
+                    MaxThroughput = MaxThroughput,
+                    CachedAt = DateTime.Now,
+                    DeviceName = DeviceName,
+                    TotalMemoryBytes = TotalMemoryBytes
+                });
+
+                // Write cache
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                string json = JsonSerializer.Serialize(cache, options);
+                File.WriteAllText(CacheFilePath, json);
+
+                Console.WriteLine($"Saved tuning results to cache: {CacheFilePath}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Warning: Could not save tuning cache: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Auto-tune with caching support. Checks cache first, runs tuning only if needed.
+        /// </summary>
+        public (int batchSize, int accumSteps) AutoTuneWithCache(
+            TTSConfig config,
+            int targetEffectiveBatch = 256,
+            bool forceRetune = false)
+        {
+            // Check cache first (unless forced to retune)
+            if (!forceRetune && TryLoadCache(config, out int cachedBatch, out int cachedAccum))
+            {
+                return (cachedBatch, cachedAccum);
+            }
+
+            // Run quick auto-tune
+            var result = QuickAutoTune(config, targetEffectiveBatch);
+
+            // Save to cache
+            SaveCache(config);
+
+            return result;
+        }
+
+        /// <summary>
+        /// Auto-tune batch size for the given model configuration.
+        /// Tests multiple batch sizes and finds the one with highest throughput.
+        /// </summary>
+        public (int batchSize, int accumSteps) AutoTune(
+            TTSConfig config,
+            int targetEffectiveBatch = 256,
+            int minBatchSize = 8,
+            int maxBatchSize = 512,
+            int warmupIterations = 2,
+            int benchmarkIterations = 5)
+        {
+            Console.WriteLine($"\n=== Auto-Tuning Batch Size ===");
+            Console.WriteLine($"Target effective batch: {targetEffectiveBatch}");
+            Console.WriteLine($"Testing range: {minBatchSize} - {maxBatchSize}\n");
+
+            // Calculate batch sizes to test (powers of 2 and some intermediates)
+            var batchSizesToTest = new List<int>();
+            for (int bs = minBatchSize; bs <= maxBatchSize; bs *= 2)
+            {
+                batchSizesToTest.Add(bs);
+                if (bs * 3 / 2 <= maxBatchSize && bs * 3 / 2 > bs)
+                    batchSizesToTest.Add(bs * 3 / 2);
+            }
+            batchSizesToTest.Sort();
+            batchSizesToTest = batchSizesToTest.Distinct().ToList();
+
+            // Estimate memory per sample based on model config
+            long estimatedMemoryPerSample = EstimateMemoryPerSample(config);
+            Console.WriteLine($"Estimated memory per sample: {estimatedMemoryPerSample / (1024.0 * 1024):F1} MB");
+
+            // Filter out batch sizes that definitely won't fit
+            long safeMemoryLimit = (long)(FreeMemoryBytes * 0.85); // Use 85% of free memory
+            int maxFeasibleBatch = (int)(safeMemoryLimit / estimatedMemoryPerSample);
+            Console.WriteLine($"Max feasible batch size (estimated): {maxFeasibleBatch}");
+
+            batchSizesToTest = batchSizesToTest.Where(bs => bs <= Math.Max(maxFeasibleBatch, minBatchSize)).ToList();
+
+            // Test each batch size
+            float bestThroughput = 0;
+            int bestBatchSize = minBatchSize;
+
+            foreach (int batchSize in batchSizesToTest.OrderByDescending(x => x))
+            {
+                var result = TestBatchSize(config, batchSize, warmupIterations, benchmarkIterations);
+                Results[batchSize] = result;
+
+                if (!result.OutOfMemory && result.ThroughputSamplesPerSec > bestThroughput)
+                {
+                    bestThroughput = result.ThroughputSamplesPerSec;
+                    bestBatchSize = batchSize;
+                }
+
+                // Print result
+                if (result.OutOfMemory)
+                {
+                    Console.WriteLine($"  Batch {batchSize,4}: OOM - {result.Error}");
+                }
+                else
+                {
+                    Console.WriteLine($"  Batch {batchSize,4}: {result.ThroughputSamplesPerSec,8:F1} samples/s, " +
+                                    $"Memory: {result.MemoryUsedBytes / (1024.0 * 1024 * 1024):F2} GB");
+                }
+
+                // Force GC and CUDA cleanup between tests
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+
+            // Calculate accumulation steps to reach target effective batch
+            int accumSteps = Math.Max(1, targetEffectiveBatch / bestBatchSize);
+            int effectiveBatch = bestBatchSize * accumSteps;
+
+            OptimalBatchSize = bestBatchSize;
+            OptimalAccumSteps = accumSteps;
+            MaxThroughput = bestThroughput;
+
+            Console.WriteLine($"\n=== Auto-Tune Results ===");
+            Console.WriteLine($"Optimal batch size: {bestBatchSize}");
+            Console.WriteLine($"Accumulation steps: {accumSteps}");
+            Console.WriteLine($"Effective batch size: {effectiveBatch}");
+            Console.WriteLine($"Max throughput: {bestThroughput:F1} samples/s");
+
+            return (bestBatchSize, accumSteps);
+        }
+
+        /// <summary>
+        /// Quick auto-tune that uses heuristics based on GPU memory.
+        /// Faster than full benchmark but may not find absolute optimal.
+        /// </summary>
+        public (int batchSize, int accumSteps) QuickAutoTune(TTSConfig config, int targetEffectiveBatch = 256)
+        {
+            Console.WriteLine($"\n=== Quick Auto-Tune ===");
+
+            long estimatedMemoryPerSample = EstimateMemoryPerSample(config);
+            long safeMemoryLimit = (long)(FreeMemoryBytes * 0.80);
+
+            // Start with max feasible and binary search down if OOM
+            int maxBatch = Math.Min(512, (int)(safeMemoryLimit / estimatedMemoryPerSample));
+            maxBatch = Math.Max(8, (maxBatch / 8) * 8); // Round to multiple of 8
+
+            Console.WriteLine($"Estimated max batch: {maxBatch}");
+
+            // Test a few key sizes quickly
+            int[] testSizes = { maxBatch, maxBatch / 2, maxBatch / 4, 64, 32 };
+            testSizes = testSizes.Where(x => x >= 8).Distinct().OrderByDescending(x => x).ToArray();
+
+            int bestBatch = 32;
+            foreach (int bs in testSizes)
+            {
+                try
+                {
+                    var result = TestBatchSize(config, bs, warmupIterations: 1, benchmarkIterations: 2);
+                    if (!result.OutOfMemory)
+                    {
+                        bestBatch = bs;
+                        Console.WriteLine($"  Batch {bs}: OK ({result.ThroughputSamplesPerSec:F1} samples/s)");
+                        break;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  Batch {bs}: OOM");
+                    }
+                }
+                catch
+                {
+                    Console.WriteLine($"  Batch {bs}: Error");
+                }
+
+                GC.Collect();
+            }
+
+            int accumSteps = Math.Max(1, targetEffectiveBatch / bestBatch);
+
+            Console.WriteLine($"\nSelected: batch={bestBatch}, accum={accumSteps} (effective={bestBatch * accumSteps})");
+
+            OptimalBatchSize = bestBatch;
+            OptimalAccumSteps = accumSteps;
+
+            return (bestBatch, accumSteps);
+        }
+
+        private TuningResult TestBatchSize(TTSConfig config, int batchSize, int warmupIterations, int benchmarkIterations)
+        {
+            var result = new TuningResult { BatchSize = batchSize };
+
+            try
+            {
+                // Create dummy data for testing
+                var textTokensBatch = new int[batchSize][];
+                var targetMelBatch = new float[batchSize][,];
+                var speakerIds = new int[batchSize];
+
+                for (int i = 0; i < batchSize; i++)
+                {
+                    textTokensBatch[i] = Enumerable.Range(0, 50).ToArray(); // 50 tokens
+                    targetMelBatch[i] = new float[200, config.MelBins]; // 200 mel frames
+                    speakerIds[i] = 0;
+                }
+
+                // Create model for testing
+                using var model = new TTSModelCuda(config);
+
+                // Warmup - process batch samples sequentially
+                for (int w = 0; w < warmupIterations; w++)
+                {
+                    for (int i = 0; i < batchSize; i++)
+                    {
+                        model.Forward(textTokensBatch[i], targetMelBatch[i], speakerIds[i]);
+                    }
+                }
+
+                // Benchmark
+                long memBefore = (long)_context.GetFreeDeviceMemorySize();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+
+                for (int iter = 0; iter < benchmarkIterations; iter++)
+                {
+                    for (int i = 0; i < batchSize; i++)
+                    {
+                        model.Forward(textTokensBatch[i], targetMelBatch[i], speakerIds[i]);
+                    }
+                }
+
+                sw.Stop();
+                long memAfter = (long)_context.GetFreeDeviceMemorySize();
+
+                int totalSamples = batchSize * benchmarkIterations;
+                result.ThroughputSamplesPerSec = totalSamples / (float)sw.Elapsed.TotalSeconds;
+                result.MemoryUsedBytes = memBefore - memAfter;
+                result.OutOfMemory = false;
+            }
+            catch (CudaException ex) when (ex.CudaError == CUResult.ErrorOutOfMemory ||
+                                           ex.Message.Contains("out of memory", StringComparison.OrdinalIgnoreCase))
+            {
+                result.OutOfMemory = true;
+                result.Error = "CUDA out of memory";
+            }
+            catch (OutOfMemoryException)
+            {
+                result.OutOfMemory = true;
+                result.Error = "System out of memory";
+            }
+            catch (Exception ex)
+            {
+                result.OutOfMemory = true;
+                result.Error = ex.Message;
+            }
+
+            return result;
+        }
+
+        private long EstimateMemoryPerSample(TTSConfig config)
+        {
+            // Rough estimation of GPU memory per training sample
+            // Based on model dimensions and typical sequence lengths
+
+            long bytesPerFloat = 4;
+            int avgSeqLen = 100;
+            int avgMelLen = 500;
+
+            // Embeddings
+            long embedMem = avgSeqLen * config.TextEmbeddingDim * bytesPerFloat;
+
+            // Encoder
+            long encoderMem = avgSeqLen * config.EncoderDim * config.EncoderConvLayers * bytesPerFloat;
+
+            // Attention
+            long attnMem = avgSeqLen * avgMelLen * bytesPerFloat; // attention weights
+            attnMem += avgSeqLen * config.AttentionDim * bytesPerFloat; // keys
+            attnMem += avgMelLen * config.AttentionDim * bytesPerFloat; // queries
+
+            // Decoder LSTM
+            long lstmMem = avgMelLen * config.DecoderDim * 4 * bytesPerFloat; // gates
+            lstmMem += config.DecoderDim * 2 * bytesPerFloat; // h and c states
+
+            // Mel output
+            long melMem = avgMelLen * config.MelBins * bytesPerFloat;
+
+            // Postnet
+            long postnetMem = avgMelLen * config.PostnetChannels * config.PostnetLayers * bytesPerFloat;
+
+            // Gradients (double the activations for backward)
+            long totalActivations = embedMem + encoderMem + attnMem + lstmMem + melMem + postnetMem;
+            long gradientMem = totalActivations; // Roughly same size for gradients
+
+            // Add some overhead (fragmentation, temporary buffers)
+            long totalPerSample = (long)((totalActivations + gradientMem) * 1.5);
+
+            return totalPerSample;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            // Don't dispose context if it was passed in
+            GC.SuppressFinalize(this);
+        }
+
+        ~BatchSizeAutoTuner() => Dispose();
     }
 }

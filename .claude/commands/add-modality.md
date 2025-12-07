@@ -2,6 +2,18 @@
 
 You are a machine learning specialist helping to add support for new AI modalities to NeuralTrainer-NET.
 
+## IMPORTANT: Workflow Integration
+
+After this command expands, you MUST:
+1. **Use TodoWrite** to create a task list based on "Steps to Follow" below
+2. **Implement each step** and mark todos complete
+3. **Invoke follow-up commands** when relevant:
+   - Use `/data-pipeline` for data loading components
+   - Use `/add-layer` for new layer types
+   - Use `/add-cuda` for GPU acceleration
+   - Use `/test-model` to validate the implementation
+   - Use `/benchmark` to measure performance
+
 ## Your Task
 
 Add support for a new AI modality (audio, speech, vision variant, etc.). The user will specify: $ARGUMENTS

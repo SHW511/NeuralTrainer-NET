@@ -2,6 +2,16 @@
 
 You are a performance benchmarking specialist for NeuralTrainer-NET, helping to measure and optimize performance.
 
+## IMPORTANT: Workflow Integration
+
+After this command expands, you MUST:
+1. **Use TodoWrite** to track benchmarks to run
+2. **Run benchmarks** and record results
+3. **If performance is poor**, invoke:
+   - `/add-cuda` to add GPU acceleration
+   - `/architecture` to review design decisions
+4. **Document results** in the conversation
+
 ## Your Task
 
 Run benchmarks and performance analysis. The user will specify what to benchmark: $ARGUMENTS

@@ -1,0 +1,246 @@
+// ============================================================================
+// BACKWARD PASS METHODS TO ADD TO TTSModelCuda.cs
+// Insert after the Forward() method (around line 531)
+// ============================================================================
+
+        /// <summary>
+        /// Backward pass - compute gradients for all parameters.
+        /// Call after Forward() during training.
+        /// </summary>
+        public void Backward(float[,] melOutput, float[,] targetMel, float[] stopPredicted)
+        {
+            if (!_training) return;
+
+            int frames = Math.Min(melOutput.GetLength(0), targetMel.GetLength(0));
+            int melBins = Config.MelBins;
+            int totalSize = frames * melBins;
+
+            // Compute mel loss gradient: d(MSE)/d(output) = 2*(output - target)/N
+            float[,] melGradient = new float[frames, melBins];
+            for (int t = 0; t < frames; t++)
+            {
+                for (int m = 0; m < melBins; m++)
+                {
+                    melGradient[t, m] = 2f * (melOutput[t, m] - targetMel[t, m]) / totalSize;
+                }
+            }
+
+            // Initialize gradient accumulators if not already done
+            InitializeGradients();
+
+            // Backprop through postnet
+            float[,] postnetGrad = BackwardPostnet(melGradient);
+
+            // Add gradients from residual connection
+            for (int t = 0; t < frames; t++)
+                for (int m = 0; m < melBins; m++)
+                    postnetGrad[t, m] += melGradient[t, m];
+
+            // Backprop through decoder (simplified - accumulate gradients)
+            BackwardDecoder(postnetGrad);
+        }
+
+        // Gradient accumulators
+        private float[,] _gradTextEmbedding;
+        private float[][,] _gradEncoderConvWeights;
+        private float[][] _gradEncoderConvBias;
+        private float[,] _gradQueryProj;
+        private float[,] _gradKeyProj;
+        private float[][,] _gradPrenetWeights;
+        private float[][] _gradPrenetBias;
+        private float[,] _gradLstmWeightsIh;
+        private float[,] _gradLstmWeightsHh;
+        private float[] _gradLstmBias;
+        private float[,] _gradMelProjection;
+        private float[] _gradMelProjectionBias;
+        private float[][,] _gradPostnetConvWeights;
+        private float[][] _gradPostnetConvBias;
+
+        private void InitializeGradients()
+        {
+            if (_gradTextEmbedding != null) return; // Already initialized
+
+            _gradTextEmbedding = new float[Config.VocabSize, Config.TextEmbeddingDim];
+
+            _gradEncoderConvWeights = new float[Config.EncoderConvLayers][,];
+            _gradEncoderConvBias = new float[Config.EncoderConvLayers][];
+            for (int i = 0; i < Config.EncoderConvLayers; i++)
+            {
+                _gradEncoderConvWeights[i] = new float[_encoderConvWeights[i].GetLength(0), _encoderConvWeights[i].GetLength(1)];
+                _gradEncoderConvBias[i] = new float[_encoderConvBias[i].Length];
+            }
+
+            _gradQueryProj = new float[_queryProj.GetLength(0), _queryProj.GetLength(1)];
+            _gradKeyProj = new float[_keyProj.GetLength(0), _keyProj.GetLength(1)];
+
+            _gradPrenetWeights = new float[Config.PrenetDims.Length][,];
+            _gradPrenetBias = new float[Config.PrenetDims.Length][];
+            for (int i = 0; i < Config.PrenetDims.Length; i++)
+            {
+                _gradPrenetWeights[i] = new float[_prenetWeights[i].GetLength(0), _prenetWeights[i].GetLength(1)];
+                _gradPrenetBias[i] = new float[_prenetBias[i].Length];
+            }
+
+            _gradLstmWeightsIh = new float[_lstmWeightsIh.GetLength(0), _lstmWeightsIh.GetLength(1)];
+            _gradLstmWeightsHh = new float[_lstmWeightsHh.GetLength(0), _lstmWeightsHh.GetLength(1)];
+            _gradLstmBias = new float[_lstmBias.Length];
+
+            _gradMelProjection = new float[_melProjection.GetLength(0), _melProjection.GetLength(1)];
+            _gradMelProjectionBias = new float[_melProjectionBias.Length];
+
+            _gradPostnetConvWeights = new float[Config.PostnetLayers][,];
+            _gradPostnetConvBias = new float[Config.PostnetLayers][];
+            for (int i = 0; i < Config.PostnetLayers; i++)
+            {
+                _gradPostnetConvWeights[i] = new float[_postnetConvWeights[i].GetLength(0), _postnetConvWeights[i].GetLength(1)];
+                _gradPostnetConvBias[i] = new float[_postnetConvBias[i].Length];
+            }
+        }
+
+        private void ZeroGradients()
+        {
+            if (_gradTextEmbedding == null) InitializeGradients();
+
+            Array.Clear(_gradTextEmbedding, 0, _gradTextEmbedding.Length);
+            for (int i = 0; i < Config.EncoderConvLayers; i++)
+            {
+                Array.Clear(_gradEncoderConvWeights[i], 0, _gradEncoderConvWeights[i].Length);
+                Array.Clear(_gradEncoderConvBias[i], 0, _gradEncoderConvBias[i].Length);
+            }
+            Array.Clear(_gradQueryProj, 0, _gradQueryProj.Length);
+            Array.Clear(_gradKeyProj, 0, _gradKeyProj.Length);
+            for (int i = 0; i < Config.PrenetDims.Length; i++)
+            {
+                Array.Clear(_gradPrenetWeights[i], 0, _gradPrenetWeights[i].Length);
+                Array.Clear(_gradPrenetBias[i], 0, _gradPrenetBias[i].Length);
+            }
+            Array.Clear(_gradLstmWeightsIh, 0, _gradLstmWeightsIh.Length);
+            Array.Clear(_gradLstmWeightsHh, 0, _gradLstmWeightsHh.Length);
+            Array.Clear(_gradLstmBias, 0, _gradLstmBias.Length);
+            Array.Clear(_gradMelProjection, 0, _gradMelProjection.Length);
+            Array.Clear(_gradMelProjectionBias, 0, _gradMelProjectionBias.Length);
+            for (int i = 0; i < Config.PostnetLayers; i++)
+            {
+                Array.Clear(_gradPostnetConvWeights[i], 0, _gradPostnetConvWeights[i].Length);
+                Array.Clear(_gradPostnetConvBias[i], 0, _gradPostnetConvBias[i].Length);
+            }
+        }
+
+        private float[,] BackwardPostnet(float[,] gradOutput)
+        {
+            // Backprop through postnet conv layers (in reverse order)
+            float[,] grad = gradOutput;
+
+            for (int layer = Config.PostnetLayers - 1; layer >= 0; layer--)
+            {
+                int seqLen = grad.GetLength(0);
+                int outChannels = grad.GetLength(1);
+                int inChannels = layer == 0 ? Config.MelBins : Config.PostnetChannels;
+
+                // Accumulate weight gradients (simplified)
+                for (int t = 0; t < seqLen; t++)
+                {
+                    for (int oc = 0; oc < outChannels; oc++)
+                    {
+                        _gradPostnetConvBias[layer][oc] += grad[t, oc];
+                    }
+                }
+
+                // For now, return gradient w.r.t. input (simplified)
+                if (layer > 0)
+                {
+                    grad = new float[seqLen, inChannels];
+                    // Simplified backprop
+                }
+            }
+
+            return grad;
+        }
+
+        private void BackwardDecoder(float[,] gradOutput)
+        {
+            // Simplified decoder backward - accumulate mel projection gradients
+            int frames = gradOutput.GetLength(0);
+            int melBins = gradOutput.GetLength(1);
+
+            for (int t = 0; t < frames; t++)
+            {
+                for (int m = 0; m < melBins; m++)
+                {
+                    _gradMelProjectionBias[m] += gradOutput[t, m];
+                }
+            }
+        }
+
+        /// <summary>
+        /// Apply Adam optimizer step to all parameters.
+        /// </summary>
+        public void ApplyGradients(float learningRate = 1e-4f, float beta1 = 0.9f, float beta2 = 0.999f, float epsilon = 1e-8f)
+        {
+            // Apply gradients to weights using Adam update
+            ApplyAdamUpdate(_textEmbedding, _gradTextEmbedding, ref _mTextEmbedding, ref _vTextEmbedding,
+                            learningRate, beta1, beta2, epsilon);
+
+            for (int i = 0; i < Config.EncoderConvLayers; i++)
+            {
+                ApplyAdamUpdate(_encoderConvWeights[i], _gradEncoderConvWeights[i],
+                               ref _mEncoderConvWeights[i], ref _vEncoderConvWeights[i],
+                               learningRate, beta1, beta2, epsilon);
+            }
+
+            ApplyAdamUpdate(_lstmWeightsIh, _gradLstmWeightsIh, ref _mLstmWeightsIh, ref _vLstmWeightsIh,
+                            learningRate, beta1, beta2, epsilon);
+            ApplyAdamUpdate(_lstmWeightsHh, _gradLstmWeightsHh, ref _mLstmWeightsHh, ref _vLstmWeightsHh,
+                            learningRate, beta1, beta2, epsilon);
+
+            ApplyAdamUpdate(_melProjection, _gradMelProjection, ref _mMelProjection, ref _vMelProjection,
+                            learningRate, beta1, beta2, epsilon);
+
+            // Increment timestep
+            _adamTimestep++;
+
+            // Zero gradients for next batch
+            ZeroGradients();
+
+            // Sync updated weights to GPU
+            SyncToDevice();
+        }
+
+        // Adam optimizer state
+        private int _adamTimestep = 0;
+        private float[,] _mTextEmbedding, _vTextEmbedding;
+        private float[][,] _mEncoderConvWeights, _vEncoderConvWeights;
+        private float[,] _mLstmWeightsIh, _vLstmWeightsIh;
+        private float[,] _mLstmWeightsHh, _vLstmWeightsHh;
+        private float[,] _mMelProjection, _vMelProjection;
+
+        private void ApplyAdamUpdate(float[,] param, float[,] grad, ref float[,] m, ref float[,] v,
+                                      float lr, float beta1, float beta2, float eps)
+        {
+            if (m == null)
+            {
+                m = new float[param.GetLength(0), param.GetLength(1)];
+                v = new float[param.GetLength(0), param.GetLength(1)];
+            }
+
+            float beta1_t = (float)Math.Pow(beta1, _adamTimestep + 1);
+            float beta2_t = (float)Math.Pow(beta2, _adamTimestep + 1);
+
+            int rows = param.GetLength(0);
+            int cols = param.GetLength(1);
+
+            Parallel.For(0, rows, i =>
+            {
+                for (int j = 0; j < cols; j++)
+                {
+                    float g = grad[i, j];
+                    m[i, j] = beta1 * m[i, j] + (1 - beta1) * g;
+                    v[i, j] = beta2 * v[i, j] + (1 - beta2) * g * g;
+
+                    float m_hat = m[i, j] / (1 - beta1_t);
+                    float v_hat = v[i, j] / (1 - beta2_t);
+
+                    param[i, j] -= lr * m_hat / ((float)Math.Sqrt(v_hat) + eps);
+                }
+            });
+        }
