@@ -152,3 +152,22 @@ When documenting architecture:
 4. **Data Structures**: Important types and their usage
 5. **Trade-offs**: Design decisions and their implications
 6. **Recommendations**: Potential improvements
+
+## Related Agents
+
+- Use `/add-layer` to implement architectural recommendations
+- Use `/add-cuda` to add GPU support for bottlenecks
+- Use `/add-modality` when designing new modality support
+- Use `/coordinate` to plan multi-phase implementations
+- Use `/review-ml` to validate architectural patterns
+- Use `/benchmark` to verify performance claims
+
+## Quality Checklist
+
+- [ ] Current architecture documented
+- [ ] Design patterns identified
+- [ ] Data flow traced
+- [ ] Extension points mapped
+- [ ] Trade-offs explained
+- [ ] Recommendations actionable
+- [ ] Diagrams clear and accurate

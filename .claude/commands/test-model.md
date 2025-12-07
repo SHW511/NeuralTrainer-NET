@@ -193,6 +193,14 @@ public static void TestCudaCpuEquivalence()
 }
 ```
 
+## Related Agents
+
+- Use `/debug-training` if tests reveal training issues
+- Use `/benchmark` for performance-focused tests
+- Use `/review-ml` to ensure test coverage is adequate
+- Use `/add-layer` to fix layer implementation issues
+- Use `/add-cuda` to fix CUDA implementation issues
+
 ## Quality Checklist
 
 - [ ] All layers have forward pass tests
@@ -201,4 +209,5 @@ public static void TestCudaCpuEquivalence()
 - [ ] Training convergence verified on simple problems
 - [ ] CUDA implementations match CPU (if applicable)
 - [ ] Memory leaks checked
-- [ ] Performance benchmarks documented
+- [ ] Performance benchmarks documented (use `/benchmark`)
+- [ ] Issues reported for fixing (use relevant agent)

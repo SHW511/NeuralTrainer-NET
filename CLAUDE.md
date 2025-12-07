@@ -94,12 +94,110 @@ dotnet run --project NET_Keras/NET_Keras-CMD.csproj
 - `TextPreProcessing` - Tokenization and sequence handling
 - `TextGenerator` - Inference for text models
 
-## Available Subagents
+## Agent Activation Rules
 
-Use these slash commands for specialized tasks:
+**IMPORTANT**: When working on tasks in this project, you MUST automatically activate the appropriate agents based on task context. Do not wait for the user to explicitly request an agent.
 
+### Automatic Activation Triggers
+
+| When the task involves... | Activate Agent |
+|---------------------------|----------------|
+| Creating/implementing a new layer (Dense, Conv, Attention, etc.) | `/add-layer` |
+| GPU acceleration, CUDA kernels, PTX files | `/add-cuda` |
+| New optimizer (AdamW, RMSprop, LAMB, etc.) | `/add-optimizer` |
+| New loss function (Focal, Huber, Triplet, etc.) | `/add-loss` |
+| Audio, speech, TTS, ASR, new modality | `/add-modality` |
+| Data loading, datasets, batching, preprocessing | `/data-pipeline` |
+| Testing, validation, gradient checking | `/test-model` |
+| Training issues: NaN, loss stuck, exploding/vanishing gradients | `/debug-training` |
+| Code review, correctness check, best practices | `/review-ml` |
+| Performance, speed, memory, profiling, CPU vs GPU | `/benchmark` |
+| Save/load models, checkpoints, ONNX, export | `/export-model` |
+| Architecture questions, design decisions, structure | `/architecture` |
+| Complex multi-step tasks, workflow planning | `/coordinate` |
+
+### Multi-Agent Activation
+
+For complex tasks, activate multiple agents in sequence:
+
+1. **Implementing a new layer**: `/add-layer` → `/test-model` → `/add-cuda` → `/benchmark`
+2. **Adding audio support**: `/coordinate` → `/add-modality` → `/data-pipeline` → `/add-layer`
+3. **Fixing training bugs**: `/debug-training` → `/test-model` → `/review-ml`
+4. **Performance optimization**: `/benchmark` → `/add-cuda` → `/test-model`
+
+### Activation Examples
+
+```
+User: "Add a GRU layer"
+→ Activate: /add-layer GRU
+
+User: "Training loss is NaN"
+→ Activate: /debug-training
+
+User: "Make the attention layer faster"
+→ Activate: /benchmark attention, then /add-cuda attention
+
+User: "Add support for audio transcription"
+→ Activate: /coordinate, then follow multi-step workflow
+```
+
+## Available Agents
+
+Use these slash commands for specialized tasks. Agents can reference each other and work together.
+
+### Core Development
 - `/add-layer` - Add a new neural network layer type
 - `/add-cuda` - Add CUDA GPU acceleration to a component
-- `/add-modality` - Add support for a new AI modality
+- `/add-optimizer` - Implement new training optimizers (AdamW, RMSprop, etc.)
+- `/add-loss` - Implement new loss functions (Focal, Huber, CTC, etc.)
+
+### Data & Modalities
+- `/add-modality` - Add support for a new AI modality (audio, speech, etc.)
+- `/data-pipeline` - Create data loading and preprocessing pipelines
+
+### Quality & Testing
 - `/test-model` - Test and validate model implementations
+- `/debug-training` - Diagnose and fix training issues (NaN, vanishing gradients, etc.)
+- `/review-ml` - Code review for correctness and best practices
+- `/benchmark` - Performance benchmarking and optimization
+
+### Infrastructure
+- `/export-model` - Model serialization, checkpoints, and ONNX export
 - `/architecture` - Explore and document architecture decisions
+- `/coordinate` - Orchestrate multi-agent workflows and track progress
+
+### Post-Implementation Follow-ups
+
+After completing a task with one agent, automatically proceed to follow-up agents:
+
+| After completing... | Then activate... |
+|---------------------|------------------|
+| `/add-layer` | `/test-model` to validate, then ask about `/add-cuda` |
+| `/add-cuda` | `/test-model` to verify CPU/CUDA match, `/benchmark` for speedup |
+| `/add-optimizer` | `/test-model` to verify convergence |
+| `/add-loss` | `/test-model` to verify gradients numerically |
+| `/add-modality` | `/test-model` for end-to-end validation |
+| `/data-pipeline` | `/benchmark` to measure throughput |
+| `/debug-training` | `/test-model` to confirm fix, `/review-ml` for root cause |
+| `/export-model` | `/test-model` to verify exported model works |
+
+### Agent Workflow Example
+
+```
+# Adding a new layer with full validation:
+/architecture [LayerName]     # Understand where it fits
+/add-layer [LayerName]        # Implement CPU version
+/test-model [LayerName]       # Validate implementation
+/add-cuda [LayerName]         # GPU acceleration
+/benchmark [LayerName]        # Performance comparison
+/review-ml [LayerName]        # Final code review
+```
+
+### Task Completion Checklist
+
+Before considering any implementation task complete, ensure:
+- [ ] Primary agent completed its work
+- [ ] `/test-model` validated the implementation
+- [ ] `/benchmark` measured performance (if applicable)
+- [ ] `/review-ml` checked for issues (for significant changes)
+- [ ] Documentation updated if needed

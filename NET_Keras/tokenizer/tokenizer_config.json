@@ -1,0 +1,11 @@
+{
+  "vocab_size": 424,
+  "pad_token": "\u003CPAD\u003E",
+  "unk_token": "\u003CUNK\u003E",
+  "bos_token": "\u003CBOS\u003E",
+  "eos_token": "\u003CEOS\u003E",
+  "pad_id": 0,
+  "unk_id": 1,
+  "bos_id": 2,
+  "eos_id": 3
+}

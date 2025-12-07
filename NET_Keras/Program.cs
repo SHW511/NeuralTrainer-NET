@@ -40,9 +40,10 @@ namespace NET_Keras
             }
 
             Console.WriteLine("\nSelect training mode:");
-            Console.WriteLine("  1. Transformer Text Generation (default)");
-            Console.WriteLine("  2. Transformer Character-Level");
-            Console.WriteLine("  3. Transformer Full Training");
+            Console.WriteLine("  1. Quick Test (tiny model, ~10 sec)");
+            Console.WriteLine("  2. Transformer Text Generation");
+            Console.WriteLine("  3. Transformer Character-Level");
+            Console.WriteLine("  4. Transformer Full Training");
             Console.Write("\nChoice [1]: ");
 
             string modeInput = Console.ReadLine()?.Trim();
@@ -52,13 +53,16 @@ namespace NET_Keras
             switch (modeInput)
             {
                 case "2":
-                    TryTransformerCharLevel(useCuda);
+                    TryTransformerTextGeneration(useCuda);
                     break;
                 case "3":
+                    TryTransformerCharLevel(useCuda);
+                    break;
+                case "4":
                     TryTransformerFullTraining(useCuda);
                     break;
                 default:
-                    TryTransformerTextGeneration(useCuda);
+                    TryTransformerQuickTest(useCuda);
                     break;
             }
         }
@@ -319,6 +323,152 @@ namespace NET_Keras
                 yTrain[i, labels[i]] = 1.0f;
             }
             return yTrain;
+        }
+
+        /// <summary>
+        /// Quick test with minimal model for fast verification.
+        /// Uses character-level tokenization and tiny model (1 layer, 32 dim).
+        /// </summary>
+        /// <param name="useCuda">If true, use CUDA GPU acceleration.</param>
+        public static void TryTransformerQuickTest(bool useCuda = false)
+        {
+            Console.WriteLine($"=== Quick Test ({(useCuda ? "CUDA" : "CPU")}) ===\n");
+            var stopwatch = new Stopwatch();
+            stopwatch.Start();
+
+            // Load text
+            string text = File.ReadAllText("training_text.txt");
+            Console.WriteLine($"Loaded {text.Length:N0} characters");
+
+            // Character-level tokenizer (instant, no training needed)
+            var tokenizer = BPETokenizer.CreateCharacterLevel(text);
+            Console.WriteLine($"Vocabulary size: {tokenizer.VocabSize}");
+
+            // Minimal settings
+            int seqLength = 32;
+            int batchSize = 4;
+            var dataset = TextDataset.FromText(text, tokenizer, seqLength, batchSize, shuffle: true, seed: 42);
+            Console.WriteLine($"Batches: {dataset.NumBatches}");
+
+            // Tiny model config
+            var config = new TransformerConfig
+            {
+                VocabSize = tokenizer.VocabSize,
+                MaxSeqLen = seqLength,
+                NumLayers = 1,              // Single layer
+                NumHeads = 2,               // 2 attention heads
+                EmbeddingDim = 32,          // Tiny embedding
+                FFNDim = 64,                // Small FFN
+                DropoutRate = 0f,           // No dropout for fast test
+                LearningRate = 1e-3f
+            };
+            config.Validate();
+
+            // Create model
+            dynamic model;
+            IDisposable disposableModel = null;
+
+            if (useCuda)
+            {
+                var cudaModel = new TransformerLMCuda(config);
+                model = cudaModel;
+                disposableModel = cudaModel;
+            }
+            else
+            {
+                model = new TransformerLM(config);
+            }
+
+            try
+            {
+                Console.WriteLine($"Parameters: {model.CountParameters():N0}");
+                Console.WriteLine("\nTraining (1 epoch)...");
+
+                float totalLoss = 0f;
+                int batchCount = 0;
+                int maxBatches = Math.Min(20, dataset.NumBatches); // Limit batches for speed
+
+                foreach (var (inputs, targets) in dataset.GetBatches())
+                {
+                    if (batchCount >= maxBatches) break;
+
+                    var logits = model.Forward(inputs);
+                    float loss = model.ComputeLoss(logits, targets);
+                    totalLoss += loss;
+                    batchCount++;
+
+                    model.Backward(logits, targets);
+
+                    // SGD update
+                    List<(string name, float[,] weights, float[,] gradients)> parameters = model.GetParameters();
+                    foreach (var (_, weights, grads) in parameters)
+                    {
+                        for (int i = 0; i < weights.GetLength(0); i++)
+                            for (int j = 0; j < weights.GetLength(1); j++)
+                                weights[i, j] -= config.LearningRate * Math.Clamp(grads[i, j], -1f, 1f);
+                    }
+
+                    if (useCuda) model.SyncToDevice();
+
+                    Console.Write($"\rBatch {batchCount}/{maxBatches} - Loss: {totalLoss / batchCount:F4}");
+                }
+
+                stopwatch.Stop();
+                Console.WriteLine($"\n\nTraining complete in {stopwatch.Elapsed.TotalSeconds:F1}s");
+                Console.WriteLine($"Final loss: {totalLoss / batchCount:F4}");
+
+                // Quick generation test
+                Console.WriteLine("\n--- Generation Test ---");
+                model.Training = false;
+
+                string seedText = "The";
+                int[] seedTokens = tokenizer.Encode(seedText);
+                int[,] tokens = new int[1, seqLength];
+
+                for (int i = 0; i < seqLength; i++)
+                    tokens[0, i] = tokenizer.PadId;
+
+                int startPos = seqLength - seedTokens.Length;
+                for (int i = 0; i < seedTokens.Length; i++)
+                    tokens[0, startPos + i] = seedTokens[i];
+
+                var generated = new List<int>();
+                for (int i = 0; i < 20; i++)
+                {
+                    var logits = model.Forward(tokens);
+
+                    // Greedy sampling
+                    int bestToken = 0;
+                    float bestLogit = float.NegativeInfinity;
+                    for (int v = 0; v < config.VocabSize; v++)
+                    {
+                        if (v == tokenizer.PadId) continue;
+                        if (logits[0, seqLength - 1, v] > bestLogit)
+                        {
+                            bestLogit = logits[0, seqLength - 1, v];
+                            bestToken = v;
+                        }
+                    }
+
+                    generated.Add(bestToken);
+                    if (bestToken == tokenizer.EosId) break;
+
+                    for (int t = 0; t < seqLength - 1; t++)
+                        tokens[0, t] = tokens[0, t + 1];
+                    tokens[0, seqLength - 1] = bestToken;
+                }
+
+                Console.WriteLine($"Seed: \"{seedText}\"");
+                Console.WriteLine($"Generated: {seedText}{tokenizer.Decode(generated.ToArray())}");
+
+                Console.WriteLine("\n=== Quick Test Complete ===");
+                Console.WriteLine("Press any key to exit...");
+                Console.ReadKey();
+            }
+            finally
+            {
+                disposableModel?.Dispose();
+            }
         }
 
         /// <summary>

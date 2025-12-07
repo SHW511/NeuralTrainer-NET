@@ -137,11 +137,21 @@ namespace NeuralNetwork.Layers.Cuda
 nvcc -ptx -o NewComponentKernel.ptx NewComponentKernel.cu
 ```
 
+## Related Agents
+
+- Use `/add-layer` first to create the CPU implementation
+- Use `/test-model` to verify CUDA matches CPU output
+- Use `/benchmark` to measure speedup vs CPU
+- Use `/debug-training` if CUDA version causes training issues
+- Use `/review-ml` for code review of CUDA wrapper
+
 ## Quality Checklist
 
 - [ ] Kernel handles edge cases (batch size, dimensions)
 - [ ] Proper GPU memory management (no leaks)
 - [ ] Thread synchronization where needed
-- [ ] Numerical accuracy matches CPU version
+- [ ] Numerical accuracy matches CPU version (use `/test-model`)
 - [ ] PTX file included in build output
 - [ ] Works with existing training pipeline
+- [ ] Speedup measured (use `/benchmark`)
+- [ ] Memory usage profiled

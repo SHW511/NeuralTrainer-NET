@@ -81,6 +81,14 @@ namespace NeuralNetwork.Layers
 }
 ```
 
+## Related Agents
+
+- Use `/add-cuda` after implementing CPU version for GPU acceleration
+- Use `/test-model` to validate the layer implementation
+- Use `/benchmark` to compare CPU vs CUDA performance
+- Use `/review-ml` for code review before finalizing
+- Use `/architecture` to understand how the layer fits in the framework
+
 ## Quality Checklist
 
 - [ ] Layer inherits from `Layer` base class
@@ -90,3 +98,5 @@ namespace NeuralNetwork.Layers
 - [ ] Backward pass computes and propagates gradients correctly
 - [ ] Works with existing optimizers (Adam, SGD)
 - [ ] Compatible with Sequential model
+- [ ] Gradient verified numerically (use `/test-model`)
+- [ ] CUDA version created (use `/add-cuda`)

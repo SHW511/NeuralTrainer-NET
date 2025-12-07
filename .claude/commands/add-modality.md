@@ -111,6 +111,16 @@ namespace NeuralNetwork.Processing.Audio
 - Layers: Diffusion/GAN/Autoregressive
 - Output: Audio waveform
 
+## Related Agents
+
+- Use `/data-pipeline` to create robust data loading
+- Use `/add-layer` for modality-specific layers
+- Use `/add-cuda` to GPU-accelerate heavy preprocessing
+- Use `/test-model` to validate end-to-end pipeline
+- Use `/benchmark` to measure training throughput
+- Use `/architecture` to document the modality design
+- Use `/coordinate` for complex multi-step implementations
+
 ## Quality Checklist
 
 - [ ] Preprocessing handles common formats
@@ -119,3 +129,5 @@ namespace NeuralNetwork.Processing.Audio
 - [ ] Inference produces expected output type
 - [ ] Training example works end-to-end
 - [ ] Documentation updated in CLAUDE.md
+- [ ] Data pipeline efficient (use `/benchmark`)
+- [ ] End-to-end test passing (use `/test-model`)
