@@ -7,7 +7,10 @@
       "Bash(powershell -c \"(Get-Content ''C:\\Users\\SvenW\\source\\repos\\SHW511\\NeuralTrainer-NET\\NET_Keras\\training_text.txt'' | Measure-Object -Line).Lines\")",
       "Bash(findstr:*)",
       "Bash(dotnet run:*)",
-      "Bash(powershell -Command \"& { ''1''; ''2'' } | dotnet run --project NET_Keras-CMD.csproj\")"
+      "Bash(powershell -Command \"& { ''1''; ''2'' } | dotnet run --project NET_Keras-CMD.csproj\")",
+      "SlashCommand(/add-modality audio voice training)",
+      "Bash(nvidia-smi:*)",
+      "Bash(wmic:*)"
     ],
     "deny": [],
     "ask": []
