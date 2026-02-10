@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using ManagedCuda;
 using ManagedCuda.BasicTypes;
 
@@ -12,7 +13,7 @@ namespace NeuralNetwork.Cuda
     ///
     /// Performance Impact: 2-4x speedup by eliminating per-operation allocations.
     /// </summary>
-    public class CudaMemoryPool : IDisposable
+    public class CudaMemoryPool : IDisposable, IAsyncDisposable
     {
         private readonly CudaContext _context;
         private readonly bool _contextOwned;
@@ -21,9 +22,6 @@ namespace NeuralNetwork.Cuda
         // Key: bucket size (power of 2), Value: stack of available buffers
         private readonly ConcurrentDictionary<int, ConcurrentStack<PooledBuffer>> _floatPools;
         private readonly ConcurrentDictionary<int, ConcurrentStack<PooledIntBuffer>> _intPools;
-
-        // Track all allocated buffers for cleanup
-        private readonly ConcurrentBag<IDisposable> _allAllocations;
 
         // Statistics
         private long _totalAllocations;
@@ -68,7 +66,6 @@ namespace NeuralNetwork.Cuda
 
             _floatPools = new ConcurrentDictionary<int, ConcurrentStack<PooledBuffer>>();
             _intPools = new ConcurrentDictionary<int, ConcurrentStack<PooledIntBuffer>>();
-            _allAllocations = new ConcurrentBag<IDisposable>();
             _maxPooledBuffersPerBucket = maxPooledBuffersPerBucket;
             _maxTotalPooledBytes = maxTotalPooledBytes;
         }
@@ -98,7 +95,6 @@ namespace NeuralNetwork.Cuda
             System.Threading.Interlocked.Add(ref _totalBytesAllocated, bucketSize * sizeof(float));
 
             var newBuffer = new PooledBuffer(this, deviceVar, bucketSize, minSize);
-            _allAllocations.Add(newBuffer);
 
             return newBuffer;
         }
@@ -127,7 +123,6 @@ namespace NeuralNetwork.Cuda
             System.Threading.Interlocked.Add(ref _totalBytesAllocated, bucketSize * sizeof(int));
 
             var newBuffer = new PooledIntBuffer(this, deviceVar, bucketSize, minSize);
-            _allAllocations.Add(newBuffer);
 
             return newBuffer;
         }
@@ -138,22 +133,21 @@ namespace NeuralNetwork.Cuda
         internal void ReturnFloat(PooledBuffer buffer)
         {
             int bucketSize = buffer.BucketSize;
-            long newPooledBytes = System.Threading.Interlocked.Add(ref _currentPooledBytes, bucketSize * sizeof(float));
+            long bucketBytes = (long)bucketSize * sizeof(float);
 
-            // Check if we're over the limit
-            if (newPooledBytes > _maxTotalPooledBytes)
+            // Check bucket count limit first (avoids accumulating too many large buffers)
+            var pool = _floatPools.GetOrAdd(bucketSize, _ => new ConcurrentStack<PooledBuffer>());
+            if (pool.Count >= _maxPooledBuffersPerBucket)
             {
-                System.Threading.Interlocked.Add(ref _currentPooledBytes, -bucketSize * sizeof(float));
                 buffer.DisposeInternal();
                 return;
             }
 
-            var pool = _floatPools.GetOrAdd(bucketSize, _ => new ConcurrentStack<PooledBuffer>());
-
-            // Check bucket limit
-            if (pool.Count >= _maxPooledBuffersPerBucket)
+            // Check total pooled bytes limit
+            long newPooledBytes = System.Threading.Interlocked.Add(ref _currentPooledBytes, bucketBytes);
+            if (newPooledBytes > _maxTotalPooledBytes)
             {
-                System.Threading.Interlocked.Add(ref _currentPooledBytes, -bucketSize * sizeof(float));
+                System.Threading.Interlocked.Add(ref _currentPooledBytes, -bucketBytes);
                 buffer.DisposeInternal();
                 return;
             }
@@ -167,20 +161,19 @@ namespace NeuralNetwork.Cuda
         internal void ReturnInt(PooledIntBuffer buffer)
         {
             int bucketSize = buffer.BucketSize;
-            long newPooledBytes = System.Threading.Interlocked.Add(ref _currentPooledBytes, bucketSize * sizeof(int));
+            long bucketBytes = (long)bucketSize * sizeof(int);
 
-            if (newPooledBytes > _maxTotalPooledBytes)
+            var pool = _intPools.GetOrAdd(bucketSize, _ => new ConcurrentStack<PooledIntBuffer>());
+            if (pool.Count >= _maxPooledBuffersPerBucket)
             {
-                System.Threading.Interlocked.Add(ref _currentPooledBytes, -bucketSize * sizeof(int));
                 buffer.DisposeInternal();
                 return;
             }
 
-            var pool = _intPools.GetOrAdd(bucketSize, _ => new ConcurrentStack<PooledIntBuffer>());
-
-            if (pool.Count >= _maxPooledBuffersPerBucket)
+            long newPooledBytes = System.Threading.Interlocked.Add(ref _currentPooledBytes, bucketBytes);
+            if (newPooledBytes > _maxTotalPooledBytes)
             {
-                System.Threading.Interlocked.Add(ref _currentPooledBytes, -bucketSize * sizeof(int));
+                System.Threading.Interlocked.Add(ref _currentPooledBytes, -bucketBytes);
                 buffer.DisposeInternal();
                 return;
             }
@@ -221,15 +214,17 @@ namespace NeuralNetwork.Cuda
             if (requestedSize <= MIN_BUCKET_SIZE)
                 return MIN_BUCKET_SIZE;
 
-            if (requestedSize >= MAX_BUCKET_SIZE)
-                return requestedSize; // Don't bucket very large allocations
-
-            // Round up to next power of 2
+            // Round up to next power of 2 for all sizes (including large allocations)
+            // This ensures large allocations can still be reused from the pool
             int bucket = MIN_BUCKET_SIZE;
-            while (bucket < requestedSize)
+            while (bucket < requestedSize && bucket > 0)
             {
                 bucket *= 2;
             }
+
+            // Guard against int overflow from the doubling
+            if (bucket <= 0)
+                return requestedSize;
 
             return bucket;
         }
@@ -255,6 +250,20 @@ namespace NeuralNetwork.Cuda
             {
                 _context?.Dispose();
             }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    _context?.Synchronize();
+                }
+                catch { }
+            });
+
+            Dispose();
         }
     }
 

@@ -18,17 +18,36 @@ namespace NeuralNetwork.Layers.Cuda
         private float[] b;
 
         private CudaContext context;
+        private bool _contextOwned;
         private CudaDeviceVariable<float> wDevice;
         private CudaDeviceVariable<float> uDevice;
         private CudaDeviceVariable<float> bDevice;
+        private bool _disposed;
 
-        public LSTMCuda(int units)
+        // Cached linker image — JIT-compiled once in Build(), reused in every Call()
+        private byte[] _cachedLinkerImage;
+
+        // Cached kernels — loaded once, reused every call
+        private CudaKernel _forwardKernel;
+        private CudaKernel _backwardKernel;
+
+        public LSTMCuda(int units, CudaContext context = null)
         {
             Units = units;
             _w = new float[0, 0]; // Initialize to avoid non-nullable warnings
             _u = new float[0, 0]; // Initialize to avoid non-nullable warnings
             b = new float[0];    // Initialize to avoid non-nullable warnings
-            context = new CudaContext();
+
+            if (context != null)
+            {
+                this.context = context;
+                _contextOwned = false;
+            }
+            else
+            {
+                this.context = new CudaContext();
+                _contextOwned = true;
+            }
         }
 
         public override void Build(int[] inputShape)
@@ -47,6 +66,35 @@ namespace NeuralNetwork.Layers.Cuda
             uDevice.CopyToDevice(_u);
             bDevice.CopyToDevice(b);
 
+            // JIT-compile the linker image once at build time, not per forward pass
+            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "LSTMKernelV2.ptx");
+            CudaLinker linker = new CudaLinker();
+            try
+            {
+                linker.AddFile(path, ManagedCuda.BasicTypes.CUJITInputType.PTX, null);
+
+                if (Directory.Exists(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\"))
+                {
+                    linker.AddFile(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\lib\x64\cudadevrt.lib", ManagedCuda.BasicTypes.CUJITInputType.Library, null);
+                }
+                else if (Directory.Exists(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\"))
+                {
+                    linker.AddFile(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\lib\x64\cudadevrt.lib", ManagedCuda.BasicTypes.CUJITInputType.Library, null);
+                }
+
+                _cachedLinkerImage = linker.Complete();
+            }
+            finally
+            {
+                linker.Dispose();
+            }
+
+            // Pre-load and cache kernels
+            _forwardKernel = context.LoadKernelPTX(_cachedLinkerImage, "lstm_forward");
+
+            var backwardPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "LSTMKernel.ptx");
+            _backwardKernel = context.LoadKernel(backwardPath, "LSTMBackward");
+
             Built = true;
         }
 
@@ -59,41 +107,23 @@ namespace NeuralNetwork.Layers.Cuda
             float[] c = new float[Units]; // Cell state
             float[] h_t = new float[Units]; // Hidden state
 
-            // Allocate memory on the GPU
-            var inputsDevice = new CudaDeviceVariable<float>(inputs.Length);
-            var hDevice = new CudaDeviceVariable<float>(h.Length);
-            var cDevice = new CudaDeviceVariable<float>(c.Length);
-            var h_tDevice = new CudaDeviceVariable<float>(h_t.Length);
-
-            // Allocate memory for gates on the GPU
-            var f_tDevice = new CudaDeviceVariable<float>(Units);
-            var i_tDevice = new CudaDeviceVariable<float>(Units);
-            var c_tildeDevice = new CudaDeviceVariable<float>(Units);
-            var o_tDevice = new CudaDeviceVariable<float>(Units);
+            // Allocate memory on the GPU with using statements to prevent leaks
+            using var inputsDevice = new CudaDeviceVariable<float>(inputs.Length);
+            using var hDevice = new CudaDeviceVariable<float>(h.Length);
+            using var cDevice = new CudaDeviceVariable<float>(c.Length);
+            using var h_tDevice = new CudaDeviceVariable<float>(h_t.Length);
+            using var f_tDevice = new CudaDeviceVariable<float>(Units);
+            using var i_tDevice = new CudaDeviceVariable<float>(Units);
+            using var c_tildeDevice = new CudaDeviceVariable<float>(Units);
+            using var o_tDevice = new CudaDeviceVariable<float>(Units);
 
             // Copy data to the GPU
             inputsDevice.CopyToDevice(inputs);
             cDevice.CopyToDevice(c);
             h_tDevice.CopyToDevice(h_t);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "LSTMKernelV2.ptx");
-
-            CudaLinker linker = new CudaLinker();
-            linker.AddFile(path, ManagedCuda.BasicTypes.CUJITInputType.PTX, null);
-
-            if (Directory.Exists(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\"))
-            {
-                linker.AddFile(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\lib\x64\cudadevrt.lib", ManagedCuda.BasicTypes.CUJITInputType.Library, null);
-            }
-            else
-            {
-                linker.AddFile(@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\lib\x64\cudadevrt.lib", ManagedCuda.BasicTypes.CUJITInputType.Library, null);
-            }
-            var linkerImage = linker.Complete();
-            linker.Dispose();
-
-            // Load the kernel from the .cu file
-            var kernel = context.LoadKernelPTX(linkerImage, "lstm_forward");
+            // Use cached forward kernel
+            var kernel = _forwardKernel;
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(Units);
@@ -112,20 +142,8 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.Run(wDevice.DevicePointer, uDevice.DevicePointer, inputsDevice.DevicePointer, h_tDevice.DevicePointer, cDevice.DevicePointer, bDevice.DevicePointer,
                        f_tDevice.DevicePointer, i_tDevice.DevicePointer, c_tildeDevice.DevicePointer, o_tDevice.DevicePointer, cDevice.DevicePointer, hDevice.DevicePointer, inputDim, Units);
 
-            //context.Synchronize();
-
             // Copy the result back to the CPU
             hDevice.CopyToHost(h);
-
-            // Free GPU memory
-            inputsDevice.Dispose();
-            hDevice.Dispose();
-            cDevice.Dispose();
-            h_tDevice.Dispose();
-            f_tDevice.Dispose();
-            i_tDevice.Dispose();
-            c_tildeDevice.Dispose();
-            o_tDevice.Dispose();
 
             return h;
         }
@@ -140,20 +158,18 @@ namespace NeuralNetwork.Layers.Cuda
             float[] db = new float[Units * 4];
             float[,] dX = new float[timesteps, inputDim];
 
-            // Allocate memory on the GPU
-            var gradientDevice = new CudaDeviceVariable<float>(gradient.Length);
-            var dWDevice = new CudaDeviceVariable<float>(dW.Length);
-            var dUDevice = new CudaDeviceVariable<float>(dU.Length);
-            var dbDevice = new CudaDeviceVariable<float>(db.Length);
-            var dXDevice = new CudaDeviceVariable<float>(dX.Length);
+            // Allocate memory on the GPU with using statements to prevent leaks
+            using var gradientDevice = new CudaDeviceVariable<float>(gradient.Length);
+            using var dWDevice = new CudaDeviceVariable<float>(dW.Length);
+            using var dUDevice = new CudaDeviceVariable<float>(dU.Length);
+            using var dbDevice = new CudaDeviceVariable<float>(db.Length);
+            using var dXDevice = new CudaDeviceVariable<float>(dX.Length);
 
             // Copy data to the GPU
             gradientDevice.CopyToDevice(gradient);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "LSTMKernel.ptx");
-
-            // Load the kernel from the .cu file
-            var kernel = context.LoadKernel(path, "LSTMBackward");
+            // Use cached backward kernel
+            var kernel = _backwardKernel;
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(128); //new dim3(Units);
@@ -171,20 +187,11 @@ namespace NeuralNetwork.Layers.Cuda
 
             kernel.Run(gradientDevice.DevicePointer, wDevice.DevicePointer, uDevice.DevicePointer, bDevice.DevicePointer, dWDevice.DevicePointer, dUDevice.DevicePointer, dbDevice.DevicePointer, dXDevice.DevicePointer, timesteps, inputDim, Units);
 
-            //context.Synchronize();
-
             // Copy the result back to the CPU
             dWDevice.CopyToHost(dW);
             dUDevice.CopyToHost(dU);
             dbDevice.CopyToHost(db);
             dXDevice.CopyToHost(dX);
-
-            // Free GPU memory
-            gradientDevice.Dispose();
-            dWDevice.Dispose();
-            dUDevice.Dispose();
-            dbDevice.Dispose();
-            dXDevice.Dispose();
 
             return dX;
         }
@@ -203,5 +210,24 @@ namespace NeuralNetwork.Layers.Cuda
         {
             throw new NotImplementedException();
         }
+
+        public override void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            wDevice?.Dispose();
+            uDevice?.Dispose();
+            bDevice?.Dispose();
+
+            if (_contextOwned)
+            {
+                context?.Dispose();
+            }
+
+            GC.SuppressFinalize(this);
+        }
+
+        ~LSTMCuda() => Dispose();
     }
 }

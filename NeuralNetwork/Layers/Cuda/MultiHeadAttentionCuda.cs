@@ -14,7 +14,7 @@ namespace NeuralNetwork.Layers.Cuda
     /// MultiHead(Q, K, V) = Concat(head_1, ..., head_h) * W_O
     /// where head_i = Attention(Q * W_Q_i, K * W_K_i, V * W_V_i)
     /// </summary>
-    public class MultiHeadAttentionCuda : Layer, IDisposable
+    public class MultiHeadAttentionCuda : Layer
     {
         private readonly int _numHeads;
         private readonly int _headDim;
@@ -664,7 +664,7 @@ namespace NeuralNetwork.Layers.Cuda
             return inputShape;
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             _wQDevice?.Dispose();
             _wKDevice?.Dispose();
@@ -687,6 +687,8 @@ namespace NeuralNetwork.Layers.Cuda
             {
                 _context?.Dispose();
             }
+
+            GC.SuppressFinalize(this);
         }
     }
 }

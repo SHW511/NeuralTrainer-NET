@@ -16,8 +16,9 @@ using NeuralNetwork.SerializationHelper;
 namespace NeuralNetwork
 {
     [Serializable]
-    public class Sequential : ISerializable, IXmlSerializable
+    public class Sequential : ISerializable, IXmlSerializable, IDisposable
     {
+        private bool _disposed;
         private List<Layer> layers;
         private bool built;
         private Loss? lossFunction; // Marked as nullable
@@ -103,6 +104,10 @@ namespace NeuralNetwork
                 {
                     Console.WriteLine($"Epoch {epoch + 1}/{epochs}, Loss: {epochLoss}, Time: {stopwatch.Elapsed}");
                 }
+
+                // Hint GC at epoch boundary to reclaim batch temporaries
+                // before the next epoch allocates new ones
+                GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
             }
         }
 
@@ -128,6 +133,9 @@ namespace NeuralNetwork
                 {
                     Console.WriteLine($"Epoch {epoch + 1}/{epochs}, Loss: {epochLoss / (numSamples / batchSize)}");
                 }
+
+                // Hint GC at epoch boundary to reclaim batch temporaries
+                GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
             }
         }
 
@@ -175,7 +183,7 @@ namespace NeuralNetwork
             }
 
             float[,] output = x;
-            List<float[,]> activations = new List<float[,]>();
+            var activations = new List<float[,]>(Layers.Count);
 
             // Forward pass
             foreach (var layer in Layers)
@@ -187,7 +195,7 @@ namespace NeuralNetwork
             float lossValue = LossFunction.Calculate(y, output);
 
             // Backward pass
-            List<float[,]> gradients = new List<float[,]>();
+            var gradients = new List<float[,]>(Layers.Count);
             float[,] dLoss = ComputeLossGradient(y, output);
 
             for (int i = Layers.Count - 1; i >= 0; i--)
@@ -230,7 +238,7 @@ namespace NeuralNetwork
             }
 
             float[,,,] output = x;
-            List<float[,,,]> activations = new List<float[,,,]>();
+            var activations = new List<float[,,,]>(Layers.Count);
 
             // Forward pass
             foreach (var layer in Layers)
@@ -242,7 +250,7 @@ namespace NeuralNetwork
             float lossValue = LossFunction.Calculate4D(output, y);
 
             // Backward pass
-            List<float[,,,]> gradients = new List<float[,,,]>();
+            var gradients = new List<float[,,,]>(Layers.Count);
             float[,,,] dLoss = ComputeLossGradient4D(y, output);
 
             for (int i = Layers.Count - 1; i >= 0; i--)
@@ -398,5 +406,24 @@ namespace NeuralNetwork
             }
             writer.WriteEndElement();
         }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            // Dispose all child layers (Layer base class now implements IDisposable)
+            if (layers != null)
+            {
+                foreach (var layer in layers)
+                {
+                    layer.Dispose();
+                }
+            }
+
+            GC.SuppressFinalize(this);
+        }
+
+        ~Sequential() => Dispose();
     }
 }

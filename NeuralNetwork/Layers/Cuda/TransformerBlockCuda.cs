@@ -13,7 +13,7 @@ namespace NeuralNetwork.Layers.Cuda
     /// x = x + MultiHeadAttention(LayerNorm(x))
     /// x = x + FeedForward(LayerNorm(x))
     /// </summary>
-    public class TransformerBlockCuda : Layer, IDisposable
+    public class TransformerBlockCuda : Layer
     {
         private readonly int _modelDim;
         private readonly int _numHeads;
@@ -405,17 +405,23 @@ namespace NeuralNetwork.Layers.Cuda
             return inputShape;
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             _attnNorm?.Dispose();
             _attention?.Dispose();
             _ffnNorm?.Dispose();
             _feedForward?.Dispose();
 
+            // Dispose dropout layers via base class Dispose
+            _attnDropout?.Dispose();
+            _ffnDropout?.Dispose();
+
             if (_contextOwned)
             {
                 _context?.Dispose();
             }
+
+            GC.SuppressFinalize(this);
         }
     }
 }

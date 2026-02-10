@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using ManagedCuda;
 using ManagedCuda.VectorTypes;
 
@@ -16,7 +17,7 @@ namespace NeuralNetwork.Cuda
     /// - Pre-configured optimal block sizes
     /// - Shared context across all components
     /// </summary>
-    public class CudaAccelerator : IDisposable
+    public class CudaAccelerator : IDisposable, IAsyncDisposable
     {
         private static CudaAccelerator _default;
         private static readonly object _lock = new object();
@@ -63,6 +64,7 @@ namespace NeuralNetwork.Cuda
         public CudaMemoryPool MemoryPool { get; }
         public CudaKernelCache KernelCache { get; }
         public CudaStreamManager StreamManager { get; }
+        public GpuMemoryWatchdog MemoryWatchdog { get; }
 
         // Device information
         public string DeviceName { get; }
@@ -99,6 +101,18 @@ namespace NeuralNetwork.Cuda
             MemoryPool = new CudaMemoryPool(Context, maxPooledBuffersPerBucket: 16, maxTotalPooledBytes: maxPooledBytes);
             KernelCache = new CudaKernelCache(Context);
             StreamManager = new CudaStreamManager(Context, maxStreams: maxStreams, preCreateStreams: 4);
+            MemoryWatchdog = new GpuMemoryWatchdog(Context, pollIntervalMs: 5000);
+
+            // Wire up default memory pressure handlers
+            MemoryWatchdog.OnWarning += args =>
+            {
+                Console.WriteLine($"[GPU WARNING] {args}");
+            };
+            MemoryWatchdog.OnCritical += args =>
+            {
+                Console.WriteLine($"[GPU CRITICAL] {args} — evicting memory pool");
+                MemoryPool.ClearPool();
+            };
 
             // Set kernel base path
             _kernelBasePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU");
@@ -235,6 +249,7 @@ namespace NeuralNetwork.Cuda
                    $"Compute Capability: {ComputeCapabilityMajor}.{ComputeCapabilityMinor}\n" +
                    $"Total Memory: {TotalMemory / (1024.0 * 1024.0 * 1024.0):F2} GB\n" +
                    $"SMs: {MultiProcessorCount}\n" +
+                   $"\n{MemoryWatchdog.GetStatus()}\n" +
                    $"\n{MemoryPool.GetStats()}\n" +
                    $"\n{KernelCache.GetStats()}\n" +
                    $"\n{StreamManager.GetStats()}";
@@ -251,6 +266,7 @@ namespace NeuralNetwork.Cuda
 
         public void Dispose()
         {
+            MemoryWatchdog?.Dispose();
             MemoryPool?.Dispose();
             KernelCache?.Dispose();
             StreamManager?.Dispose();
@@ -264,6 +280,29 @@ namespace NeuralNetwork.Cuda
                         _default = null;
                 }
             }
+        }
+
+        /// <summary>
+        /// Async dispose: synchronizes GPU before releasing resources.
+        /// Use with 'await using' for clean shutdown of GPU pipelines.
+        /// </summary>
+        public async ValueTask DisposeAsync()
+        {
+            // Synchronize all pending GPU work on a background thread
+            // to avoid blocking the caller
+            await Task.Run(() =>
+            {
+                try
+                {
+                    Context?.Synchronize();
+                }
+                catch
+                {
+                    // Ignore synchronization failures during shutdown
+                }
+            });
+
+            Dispose();
         }
     }
 }

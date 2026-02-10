@@ -13,7 +13,7 @@ namespace NeuralNetwork.Layers.Cuda
     /// CUDA-accelerated Position-wise Feed-Forward Network.
     /// FFN(x) = Linear2(GELU(Linear1(x)))
     /// </summary>
-    public class FeedForwardCuda : Layer, IDisposable
+    public class FeedForwardCuda : Layer
     {
         private readonly int _modelDim;
         private readonly int _ffDim;
@@ -513,7 +513,7 @@ namespace NeuralNetwork.Layers.Cuda
             return inputShape;
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             _w1Device?.Dispose();
             _b1Device?.Dispose();
@@ -526,6 +526,8 @@ namespace NeuralNetwork.Layers.Cuda
             {
                 _context?.Dispose();
             }
+
+            GC.SuppressFinalize(this);
         }
     }
 }

@@ -18,8 +18,9 @@ namespace NeuralNetwork.Models
     /// 4. Final Layer Normalization
     /// 5. Output Projection (optional weight tying with embeddings)
     /// </summary>
-    public class TransformerLM
+    public class TransformerLM : IDisposable
     {
+        private bool _disposed;
         private readonly TransformerConfig _config;
 
         // Model components
@@ -269,19 +270,11 @@ namespace NeuralNetwork.Models
             Tensor dHidden = ApplyLayerNormBackward3D(dNormOutput, _finalNorm, _blockOutputs[_config.NumLayers - 1]);
 
             // Gradient through Transformer blocks (reverse order)
+            // Re-run forward once per block to set up cached values for backward,
+            // using saved _blockOutputs from the forward pass (avoids O(N²) re-computation)
             for (int i = _config.NumLayers - 1; i >= 0; i--)
             {
                 Tensor blockInput = i == 0 ? _lastAfterPosEnc : _blockOutputs[i - 1];
-
-                // Need to re-run forward to set up cached values
-                if (i > 0)
-                {
-                    Tensor prevHidden = _lastAfterPosEnc;
-                    for (int j = 0; j < i; j++)
-                    {
-                        prevHidden = _blocks[j].Forward(prevHidden);
-                    }
-                }
                 _blocks[i].Forward(blockInput);
                 dHidden = _blocks[i].Backward(dHidden);
             }
@@ -924,5 +917,33 @@ namespace NeuralNetwork.Models
 
             return total;
         }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            // Dispose transformer blocks (may hold CUDA resources)
+            if (_blocks != null)
+            {
+                foreach (var block in _blocks)
+                {
+                    if (block is IDisposable disposable)
+                    {
+                        disposable.Dispose();
+                    }
+                }
+            }
+
+            // Dispose final layer norm if it implements IDisposable
+            if (_finalNorm is IDisposable normDisposable)
+            {
+                normDisposable.Dispose();
+            }
+
+            GC.SuppressFinalize(this);
+        }
+
+        ~TransformerLM() => Dispose();
     }
 }

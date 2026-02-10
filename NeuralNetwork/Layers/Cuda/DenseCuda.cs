@@ -12,6 +12,7 @@ namespace NeuralNetwork.Layers.Cuda
 {
     public class DenseCuda : Layer
     {
+        private bool _disposed;
         public int OutputDim { get; private set; }
         public Func<int, int, float[,]> Init { get; private set; }
         public Func<float[,], float[,]> Activation { get; private set; }
@@ -21,19 +22,39 @@ namespace NeuralNetwork.Layers.Cuda
 
         private float[,] inputs; // Store inputs for backpropagation
         private CudaContext context;
+        private bool _contextOwned;
         private CudaDeviceVariable<float> weightsDevice;
         private CudaDeviceVariable<float> biasesDevice;
 
+        // Cached kernel PTX path — resolved once, reused every call
+        private string _kernelPath;
+
+        // Cached kernels — loaded once, reused every call
+        private CudaKernel _matMulKernel;
+        private CudaKernel _backwardKernel;
+
         public DenseCuda(int outputDim, Func<int, int, float[,]> init = null,
                      Func<float[,], float[,]> activation = null, float[,] weights = null,
-                     bool useBias = true)
+                     bool useBias = true, CudaContext context = null)
         {
             OutputDim = outputDim;
             Init = init ?? Initializers.Initializers.GlorotUniform;
             Activation = activation ?? Activations.Activations.Linear;
             InitialWeights = weights;
             UseBias = useBias;
-            context = new CudaContext();
+
+            if (context != null)
+            {
+                this.context = context;
+                _contextOwned = false;
+            }
+            else
+            {
+                this.context = new CudaContext();
+                _contextOwned = true;
+            }
+
+            _kernelPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "DenseKernel.ptx");
         }
 
         public override void Build(int[] inputShape)
@@ -60,6 +81,10 @@ namespace NeuralNetwork.Layers.Cuda
                 Weights = InitialWeights;
                 weightsDevice.CopyToDevice(Weights);
             }
+
+            // Pre-load and cache kernels once at build time
+            _matMulKernel = context.LoadKernelPTX(_kernelPath, "MatMul");
+            _backwardKernel = context.LoadKernelPTX(_kernelPath, "DenseBackward");
 
             Built = true;
         }
@@ -95,12 +120,12 @@ namespace NeuralNetwork.Layers.Cuda
             float[] biasGradient = new float[OutputDim];
             float[,] inputGradient = new float[batchSize, inputDim];
 
-            // Allocate memory on the GPU
-            var inputsDevice = new CudaDeviceVariable<float>(inputs.Length);
-            var gradientDevice = new CudaDeviceVariable<float>(gradient.Length);
-            var weightGradientDevice = new CudaDeviceVariable<float>(weightGradient.Length);
-            var biasGradientDevice = new CudaDeviceVariable<float>(biasGradient.Length);
-            var inputGradientDevice = new CudaDeviceVariable<float>(inputGradient.Length);
+            // Allocate memory on the GPU with using statements to prevent leaks on exceptions
+            using var inputsDevice = new CudaDeviceVariable<float>(inputs.Length);
+            using var gradientDevice = new CudaDeviceVariable<float>(gradient.Length);
+            using var weightGradientDevice = new CudaDeviceVariable<float>(weightGradient.Length);
+            using var biasGradientDevice = new CudaDeviceVariable<float>(biasGradient.Length);
+            using var inputGradientDevice = new CudaDeviceVariable<float>(inputGradient.Length);
 
             // Copy data to the GPU
             inputsDevice.CopyToDevice(inputs);
@@ -109,10 +134,8 @@ namespace NeuralNetwork.Layers.Cuda
             biasGradientDevice.CopyToDevice(biasGradient);
             inputGradientDevice.CopyToDevice(inputGradient);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "DenseKernel.ptx");
-
-            // Load the kernel from the .ptx file
-            var kernel = context.LoadKernelPTX(path, "DenseBackward");
+            // Use cached kernel
+            var kernel = _backwardKernel;
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(16, 16);
@@ -123,19 +146,10 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.BlockDimensions = blockSize;
             kernel.Run(inputsDevice.DevicePointer, gradientDevice.DevicePointer, weightsDevice.DevicePointer, weightGradientDevice.DevicePointer, biasGradientDevice.DevicePointer, inputGradientDevice.DevicePointer, batchSize, inputDim, OutputDim, UseBias, 0.01f); // Example learning rate
 
-            //context.Synchronize();
-
             // Copy the result back to the CPU
             weightGradientDevice.CopyToHost(weightGradient);
             biasGradientDevice.CopyToHost(biasGradient);
             inputGradientDevice.CopyToHost(inputGradient);
-
-            // Free GPU memory
-            inputsDevice.Dispose();
-            gradientDevice.Dispose();
-            weightGradientDevice.Dispose();
-            biasGradientDevice.Dispose();
-            inputGradientDevice.Dispose();
 
             // Update weights and biases on the CPU
             for (int j = 0; j < OutputDim; j++)
@@ -167,19 +181,17 @@ namespace NeuralNetwork.Layers.Cuda
             int bCols = b.GetLength(1);
             float[,] result = new float[aRows, bCols];
 
-            // Allocate memory on the GPU
-            var aDevice = new CudaDeviceVariable<float>(a.Length);
-            var bDevice = new CudaDeviceVariable<float>(b.Length);
-            var resultDevice = new CudaDeviceVariable<float>(result.Length);
+            // Allocate memory on the GPU with using statements to prevent leaks on exceptions
+            using var aDevice = new CudaDeviceVariable<float>(a.Length);
+            using var bDevice = new CudaDeviceVariable<float>(b.Length);
+            using var resultDevice = new CudaDeviceVariable<float>(result.Length);
 
             // Copy data to the GPU
             aDevice.CopyToDevice(a);
             bDevice.CopyToDevice(b);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "DenseKernel.ptx");
-
-            // Compile and load the kernel
-            var kernel = context.LoadKernelPTX(path, "MatMul");
+            // Use cached kernel
+            var kernel = _matMulKernel;
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(16, 16);
@@ -190,15 +202,8 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.BlockDimensions = blockSize;
             kernel.Run(aDevice.DevicePointer, bDevice.DevicePointer, resultDevice.DevicePointer, aRows, aCols, bCols);
 
-            //context.Synchronize();
-
             // Copy the result back to the CPU
             resultDevice.CopyToHost(result);
-
-            // Free GPU memory
-            aDevice.Dispose();
-            bDevice.Dispose();
-            resultDevice.Dispose();
 
             return result;
         }
@@ -252,5 +257,23 @@ namespace NeuralNetwork.Layers.Cuda
         {
             throw new NotImplementedException();
         }
+
+        public override void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            weightsDevice?.Dispose();
+            biasesDevice?.Dispose();
+
+            if (_contextOwned)
+            {
+                context?.Dispose();
+            }
+
+            GC.SuppressFinalize(this);
+        }
+
+        ~DenseCuda() => Dispose();
     }
 }

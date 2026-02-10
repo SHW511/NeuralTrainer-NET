@@ -17,7 +17,7 @@ namespace NeuralNetwork.Layers.Cuda
     ///
     /// Performance: 2-4x faster than original DenseCuda
     /// </summary>
-    public class DenseCudaOptimized : Layer, IDisposable
+    public class DenseCudaOptimized : Layer
     {
         private readonly int _outputDim;
         private readonly Func<int, int, float[,]> _init;
@@ -391,11 +391,13 @@ namespace NeuralNetwork.Layers.Cuda
             throw new NotImplementedException("DenseCudaOptimized does not support 4D tensors");
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             // Return pooled buffers
             _weightsDevice?.Dispose();
             _biasDevice?.Dispose();
+
+            GC.SuppressFinalize(this);
         }
     }
 }
