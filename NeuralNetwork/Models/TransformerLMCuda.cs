@@ -409,19 +409,11 @@ namespace NeuralNetwork.Models
             Tensor dHidden = _finalNorm.Backward(dNormOutput);
 
             // Gradient through Transformer blocks (reverse order)
+            // Re-run forward once per block to set up cached values for backward,
+            // using saved _blockOutputs from the forward pass (avoids O(N²) re-computation)
             for (int i = _config.NumLayers - 1; i >= 0; i--)
             {
                 Tensor blockInput = i == 0 ? _lastAfterPosEnc : _blockOutputs[i - 1];
-
-                // Re-run forward to set up cached values
-                if (i > 0)
-                {
-                    Tensor prevHidden = _lastAfterPosEnc;
-                    for (int j = 0; j < i; j++)
-                    {
-                        prevHidden = _blocks[j].Forward(prevHidden);
-                    }
-                }
                 _blocks[i].Forward(blockInput);
                 dHidden = _blocks[i].Backward(dHidden);
             }

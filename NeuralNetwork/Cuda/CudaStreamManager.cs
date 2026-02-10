@@ -82,8 +82,11 @@ namespace NeuralNetwork.Cuda
         /// </summary>
         public ManagedStream DefaultStream => _defaultStream;
 
+        private const int STREAM_RENT_TIMEOUT_MS = 30000; // 30 second timeout
+
         /// <summary>
         /// Rent a stream from the pool. Creates new stream if pool is empty (up to max).
+        /// Throws TimeoutException if no stream becomes available within 30 seconds.
         /// </summary>
         public ManagedStream RentStream()
         {
@@ -106,10 +109,18 @@ namespace NeuralNetwork.Cuda
                 }
             }
 
-            // Wait for a stream to become available
+            // Wait for a stream to become available with timeout
             SpinWait spin = new SpinWait();
+            var deadline = Environment.TickCount64 + STREAM_RENT_TIMEOUT_MS;
             while (!_availableStreams.TryPop(out stream))
             {
+                if (Environment.TickCount64 >= deadline)
+                {
+                    throw new TimeoutException(
+                        $"Timed out waiting {STREAM_RENT_TIMEOUT_MS}ms for an available CUDA stream. " +
+                        $"All {_maxStreams} streams are rented. This may indicate a stream leak — " +
+                        $"ensure all rented streams are disposed via 'using' statements.");
+                }
                 spin.SpinOnce();
             }
 
@@ -224,6 +235,9 @@ namespace NeuralNetwork.Cuda
                 }
                 _allStreams.Clear();
             }
+
+            // Dispose the default stream (not tracked in _allStreams)
+            _defaultStream?.DisposeInternal();
 
             while (_availableStreams.TryPop(out _)) { }
 

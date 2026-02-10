@@ -23,6 +23,10 @@ namespace NeuralNetwork.Cuda
         // Cache for loaded PTX modules to avoid re-reading files
         private readonly ConcurrentDictionary<string, byte[]> _ptxCache;
 
+        // Size limits to prevent unbounded memory growth
+        private const int MAX_CACHED_KERNELS = 256;
+        private const int MAX_CACHED_PTX_FILES = 64;
+
         // Statistics
         private long _cacheHits;
         private long _cacheMisses;
@@ -71,6 +75,13 @@ namespace NeuralNetwork.Cuda
 
             System.Threading.Interlocked.Increment(ref _cacheMisses);
 
+            // Evict oldest PTX entries if cache is too large
+            if (_ptxCache.Count >= MAX_CACHED_PTX_FILES)
+            {
+                // Simple eviction: clear all and re-add current
+                _ptxCache.Clear();
+            }
+
             // Load PTX file (cached)
             var ptxData = _ptxCache.GetOrAdd(ptxPath, path =>
             {
@@ -81,6 +92,12 @@ namespace NeuralNetwork.Cuda
 
             // Load kernel from PTX
             var kernel = _context.LoadKernelPTX(ptxData, kernelName);
+
+            // Evict oldest kernel entries if cache is too large
+            if (_kernelCache.Count >= MAX_CACHED_KERNELS)
+            {
+                _kernelCache.Clear();
+            }
 
             // Cache the kernel
             _kernelCache.TryAdd(key, kernel);

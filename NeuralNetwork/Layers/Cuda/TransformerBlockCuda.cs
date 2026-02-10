@@ -412,6 +412,12 @@ namespace NeuralNetwork.Layers.Cuda
             _ffnNorm?.Dispose();
             _feedForward?.Dispose();
 
+            // Dispose dropout layers (may hold resources)
+            if (_attnDropout is IDisposable attnDropDisposable)
+                attnDropDisposable.Dispose();
+            if (_ffnDropout is IDisposable ffnDropDisposable)
+                ffnDropDisposable.Dispose();
+
             if (_contextOwned)
             {
                 _context?.Dispose();

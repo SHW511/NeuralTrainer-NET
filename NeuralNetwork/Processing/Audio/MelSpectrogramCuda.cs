@@ -52,6 +52,7 @@ namespace NeuralNetwork.Processing.Audio
         private float[] _window;
         private float[,] _melFilterbank;
         private bool _disposed;
+        private bool _contextOwned;
         private bool _kernelsLoaded;
 
         private int _maxFrames = 2000;
@@ -69,7 +70,16 @@ namespace NeuralNetwork.Processing.Audio
             _numBins = FFTSize / 2 + 1;
 
             // Use provided context or create new
-            _context = context ?? new CudaContext();
+            if (context != null)
+            {
+                _context = context;
+                _contextOwned = false;
+            }
+            else
+            {
+                _context = new CudaContext();
+                _contextOwned = true;
+            }
 
             Initialize();
         }
@@ -326,6 +336,11 @@ namespace NeuralNetwork.Processing.Audio
             _outputDevice?.Dispose();
             _fftPlan?.Dispose();
             _ifftPlan?.Dispose();
+
+            if (_contextOwned)
+            {
+                _context?.Dispose();
+            }
 
             GC.SuppressFinalize(this);
         }

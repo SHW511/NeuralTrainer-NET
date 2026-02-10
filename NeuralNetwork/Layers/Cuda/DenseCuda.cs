@@ -10,8 +10,9 @@ using ManagedCuda.VectorTypes;
 
 namespace NeuralNetwork.Layers.Cuda
 {
-    public class DenseCuda : Layer
+    public class DenseCuda : Layer, IDisposable
     {
+        private bool _disposed;
         public int OutputDim { get; private set; }
         public Func<int, int, float[,]> Init { get; private set; }
         public Func<float[,], float[,]> Activation { get; private set; }
@@ -95,12 +96,12 @@ namespace NeuralNetwork.Layers.Cuda
             float[] biasGradient = new float[OutputDim];
             float[,] inputGradient = new float[batchSize, inputDim];
 
-            // Allocate memory on the GPU
-            var inputsDevice = new CudaDeviceVariable<float>(inputs.Length);
-            var gradientDevice = new CudaDeviceVariable<float>(gradient.Length);
-            var weightGradientDevice = new CudaDeviceVariable<float>(weightGradient.Length);
-            var biasGradientDevice = new CudaDeviceVariable<float>(biasGradient.Length);
-            var inputGradientDevice = new CudaDeviceVariable<float>(inputGradient.Length);
+            // Allocate memory on the GPU with using statements to prevent leaks on exceptions
+            using var inputsDevice = new CudaDeviceVariable<float>(inputs.Length);
+            using var gradientDevice = new CudaDeviceVariable<float>(gradient.Length);
+            using var weightGradientDevice = new CudaDeviceVariable<float>(weightGradient.Length);
+            using var biasGradientDevice = new CudaDeviceVariable<float>(biasGradient.Length);
+            using var inputGradientDevice = new CudaDeviceVariable<float>(inputGradient.Length);
 
             // Copy data to the GPU
             inputsDevice.CopyToDevice(inputs);
@@ -123,19 +124,10 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.BlockDimensions = blockSize;
             kernel.Run(inputsDevice.DevicePointer, gradientDevice.DevicePointer, weightsDevice.DevicePointer, weightGradientDevice.DevicePointer, biasGradientDevice.DevicePointer, inputGradientDevice.DevicePointer, batchSize, inputDim, OutputDim, UseBias, 0.01f); // Example learning rate
 
-            //context.Synchronize();
-
             // Copy the result back to the CPU
             weightGradientDevice.CopyToHost(weightGradient);
             biasGradientDevice.CopyToHost(biasGradient);
             inputGradientDevice.CopyToHost(inputGradient);
-
-            // Free GPU memory
-            inputsDevice.Dispose();
-            gradientDevice.Dispose();
-            weightGradientDevice.Dispose();
-            biasGradientDevice.Dispose();
-            inputGradientDevice.Dispose();
 
             // Update weights and biases on the CPU
             for (int j = 0; j < OutputDim; j++)
@@ -167,10 +159,10 @@ namespace NeuralNetwork.Layers.Cuda
             int bCols = b.GetLength(1);
             float[,] result = new float[aRows, bCols];
 
-            // Allocate memory on the GPU
-            var aDevice = new CudaDeviceVariable<float>(a.Length);
-            var bDevice = new CudaDeviceVariable<float>(b.Length);
-            var resultDevice = new CudaDeviceVariable<float>(result.Length);
+            // Allocate memory on the GPU with using statements to prevent leaks on exceptions
+            using var aDevice = new CudaDeviceVariable<float>(a.Length);
+            using var bDevice = new CudaDeviceVariable<float>(b.Length);
+            using var resultDevice = new CudaDeviceVariable<float>(result.Length);
 
             // Copy data to the GPU
             aDevice.CopyToDevice(a);
@@ -190,15 +182,8 @@ namespace NeuralNetwork.Layers.Cuda
             kernel.BlockDimensions = blockSize;
             kernel.Run(aDevice.DevicePointer, bDevice.DevicePointer, resultDevice.DevicePointer, aRows, aCols, bCols);
 
-            //context.Synchronize();
-
             // Copy the result back to the CPU
             resultDevice.CopyToHost(result);
-
-            // Free GPU memory
-            aDevice.Dispose();
-            bDevice.Dispose();
-            resultDevice.Dispose();
 
             return result;
         }
@@ -252,5 +237,19 @@ namespace NeuralNetwork.Layers.Cuda
         {
             throw new NotImplementedException();
         }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            weightsDevice?.Dispose();
+            biasesDevice?.Dispose();
+            context?.Dispose();
+
+            GC.SuppressFinalize(this);
+        }
+
+        ~DenseCuda() => Dispose();
     }
 }

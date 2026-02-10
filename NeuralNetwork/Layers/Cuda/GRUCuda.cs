@@ -9,7 +9,7 @@ using ManagedCuda;
 
 namespace NeuralNetwork.Layers.Cuda
 {
-    public class GRUCuda : Layer
+    public class GRUCuda : Layer, IDisposable
     {
         public int Units { get; private set; }
 
@@ -21,6 +21,7 @@ namespace NeuralNetwork.Layers.Cuda
         private CudaDeviceVariable<float> wDevice;
         private CudaDeviceVariable<float> uDevice;
         private CudaDeviceVariable<float> bDevice;
+        private bool _disposed;
 
         public GRUCuda(int units)
         {
@@ -58,10 +59,10 @@ namespace NeuralNetwork.Layers.Cuda
             float[,] h = new float[timesteps, Units];
             float[] h_t = new float[Units]; // Hidden state
 
-            // Allocate memory on the GPU
-            var inputsDevice = new CudaDeviceVariable<float>(inputs.Length);
-            var hDevice = new CudaDeviceVariable<float>(h.Length);
-            var h_tDevice = new CudaDeviceVariable<float>(h_t.Length);
+            // Allocate memory on the GPU with using statements to prevent leaks
+            using var inputsDevice = new CudaDeviceVariable<float>(inputs.Length);
+            using var hDevice = new CudaDeviceVariable<float>(h.Length);
+            using var h_tDevice = new CudaDeviceVariable<float>(h_t.Length);
 
             // Copy data to the GPU
             inputsDevice.CopyToDevice(inputs);
@@ -91,11 +92,6 @@ namespace NeuralNetwork.Layers.Cuda
             // Copy the result back to the CPU
             hDevice.CopyToHost(h);
 
-            // Free GPU memory
-            inputsDevice.Dispose();
-            hDevice.Dispose();
-            h_tDevice.Dispose();
-
             return h;
         }
 
@@ -109,12 +105,12 @@ namespace NeuralNetwork.Layers.Cuda
             float[] db = new float[Units * 3];
             float[,] dX = new float[timesteps, inputDim];
 
-            // Allocate memory on the GPU
-            var gradientDevice = new CudaDeviceVariable<float>(gradient.Length);
-            var dWDevice = new CudaDeviceVariable<float>(dW.Length);
-            var dUDevice = new CudaDeviceVariable<float>(dU.Length);
-            var dbDevice = new CudaDeviceVariable<float>(db.Length);
-            var dXDevice = new CudaDeviceVariable<float>(dX.Length);
+            // Allocate memory on the GPU with using statements to prevent leaks
+            using var gradientDevice = new CudaDeviceVariable<float>(gradient.Length);
+            using var dWDevice = new CudaDeviceVariable<float>(dW.Length);
+            using var dUDevice = new CudaDeviceVariable<float>(dU.Length);
+            using var dbDevice = new CudaDeviceVariable<float>(db.Length);
+            using var dXDevice = new CudaDeviceVariable<float>(dX.Length);
 
             // Copy data to the GPU
             gradientDevice.CopyToDevice(gradient);
@@ -146,13 +142,6 @@ namespace NeuralNetwork.Layers.Cuda
             dbDevice.CopyToHost(db);
             dXDevice.CopyToHost(dX);
 
-            // Free GPU memory
-            gradientDevice.Dispose();
-            dWDevice.Dispose();
-            dUDevice.Dispose();
-            dbDevice.Dispose();
-            dXDevice.Dispose();
-
             return dX;
         }
 
@@ -170,6 +159,20 @@ namespace NeuralNetwork.Layers.Cuda
         {
             throw new NotImplementedException();
         }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            wDevice?.Dispose();
+            uDevice?.Dispose();
+            bDevice?.Dispose();
+            context?.Dispose();
+
+            GC.SuppressFinalize(this);
+        }
+
+        ~GRUCuda() => Dispose();
     }
 }
-
