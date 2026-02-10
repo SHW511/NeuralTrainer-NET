@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using ManagedCuda;
 using ManagedCuda.BasicTypes;
 
@@ -15,7 +16,7 @@ namespace NeuralNetwork.Cuda
     /// - Overlapped compute and memory transfers
     /// - Batch pipelining
     /// </summary>
-    public class CudaStreamManager : IDisposable
+    public class CudaStreamManager : IDisposable, IAsyncDisposable
     {
         private readonly CudaContext _context;
         private readonly bool _contextOwned;
@@ -245,6 +246,27 @@ namespace NeuralNetwork.Cuda
             {
                 _context?.Dispose();
             }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            // Synchronize all streams before disposing
+            await Task.Run(() =>
+            {
+                try
+                {
+                    lock (_streamsLock)
+                    {
+                        foreach (var stream in _allStreams)
+                        {
+                            stream.Synchronize();
+                        }
+                    }
+                }
+                catch { }
+            });
+
+            Dispose();
         }
     }
 

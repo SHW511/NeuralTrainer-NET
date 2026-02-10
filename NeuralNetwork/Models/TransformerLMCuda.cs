@@ -20,7 +20,7 @@ namespace NeuralNetwork.Models
     /// 4. Final Layer Normalization (CUDA)
     /// 5. Output Projection (CUDA)
     /// </summary>
-    public class TransformerLMCuda : IDisposable
+    public class TransformerLMCuda : IDisposable, IAsyncDisposable
     {
         private readonly TransformerConfig _config;
 
@@ -751,6 +751,27 @@ namespace NeuralNetwork.Models
 
             _finalNorm?.Dispose();
             _context?.Dispose();
+        }
+
+        /// <summary>
+        /// Async dispose: synchronizes GPU before releasing resources.
+        /// Use with 'await using' for clean shutdown.
+        /// </summary>
+        public async ValueTask DisposeAsync()
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    _context?.Synchronize();
+                }
+                catch
+                {
+                    // Ignore synchronization failures during shutdown
+                }
+            });
+
+            Dispose();
         }
     }
 }

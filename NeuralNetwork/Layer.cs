@@ -9,7 +9,7 @@ using System.Xml.Schema;
 namespace NeuralNetwork
 {
     //[Serializable]
-    public abstract class Layer // : IXmlSerializable
+    public abstract class Layer : IDisposable // : IXmlSerializable
     {
         public bool Built { get; set; } = false;
         public int InputDim { get; set; }
@@ -124,6 +124,15 @@ namespace NeuralNetwork
             }
             Weights = ConvertToMultidimensionalArray(weightsList.ToArray());
             reader.ReadEndElement();
+        }
+
+        /// <summary>
+        /// Virtual Dispose for uniform cleanup. Override in CUDA layers to free GPU resources.
+        /// CPU-only layers need not override — this is a no-op by default.
+        /// </summary>
+        public virtual void Dispose()
+        {
+            GC.SuppressFinalize(this);
         }
     }
 }

@@ -9,7 +9,7 @@ using ManagedCuda;
 
 namespace NeuralNetwork.Layers.Cuda
 {
-    public class GRUCuda : Layer, IDisposable
+    public class GRUCuda : Layer
     {
         public int Units { get; private set; }
 
@@ -18,18 +18,36 @@ namespace NeuralNetwork.Layers.Cuda
         private float[] b;
 
         private CudaContext context;
+        private bool _contextOwned;
         private CudaDeviceVariable<float> wDevice;
         private CudaDeviceVariable<float> uDevice;
         private CudaDeviceVariable<float> bDevice;
         private bool _disposed;
 
-        public GRUCuda(int units)
+        // Cached kernel path and kernels
+        private string _kernelPath;
+        private CudaKernel _forwardKernel;
+        private CudaKernel _backwardKernel;
+
+        public GRUCuda(int units, CudaContext context = null)
         {
             Units = units;
             _w = new float[0, 0]; // Initialize to avoid non-nullable warnings
             _u = new float[0, 0]; // Initialize to avoid non-nullable warnings
             b = new float[0];    // Initialize to avoid non-nullable warnings
-            context = new CudaContext();
+
+            if (context != null)
+            {
+                this.context = context;
+                _contextOwned = false;
+            }
+            else
+            {
+                this.context = new CudaContext();
+                _contextOwned = true;
+            }
+
+            _kernelPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "GRUKernel.ptx");
         }
 
         public override void Build(int[] inputShape)
@@ -47,6 +65,10 @@ namespace NeuralNetwork.Layers.Cuda
             wDevice.CopyToDevice(_w);
             uDevice.CopyToDevice(_u);
             bDevice.CopyToDevice(b);
+
+            // Pre-load and cache kernels
+            _forwardKernel = context.LoadKernel(_kernelPath, "GRUForward");
+            _backwardKernel = context.LoadKernel(_kernelPath, "GRUBackward");
 
             Built = true;
         }
@@ -68,10 +90,8 @@ namespace NeuralNetwork.Layers.Cuda
             inputsDevice.CopyToDevice(inputs);
             h_tDevice.CopyToDevice(h_t);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "GRUKernel.ptx");
-
-            // Load the kernel from the .cu file
-            var kernel = context.LoadKernel(path, "GRUForward");
+            // Use cached forward kernel
+            var kernel = _forwardKernel;
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(Units);
@@ -115,10 +135,8 @@ namespace NeuralNetwork.Layers.Cuda
             // Copy data to the GPU
             gradientDevice.CopyToDevice(gradient);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "GRUKernel.ptx");
-
-            // Load the kernel from the .cu file
-            var kernel = context.LoadKernel(path, "GRUBackward");
+            // Use cached backward kernel
+            var kernel = _backwardKernel;
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(Units);
@@ -160,7 +178,7 @@ namespace NeuralNetwork.Layers.Cuda
             throw new NotImplementedException();
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
@@ -168,7 +186,11 @@ namespace NeuralNetwork.Layers.Cuda
             wDevice?.Dispose();
             uDevice?.Dispose();
             bDevice?.Dispose();
-            context?.Dispose();
+
+            if (_contextOwned)
+            {
+                context?.Dispose();
+            }
 
             GC.SuppressFinalize(this);
         }

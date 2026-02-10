@@ -104,6 +104,10 @@ namespace NeuralNetwork
                 {
                     Console.WriteLine($"Epoch {epoch + 1}/{epochs}, Loss: {epochLoss}, Time: {stopwatch.Elapsed}");
                 }
+
+                // Hint GC at epoch boundary to reclaim batch temporaries
+                // before the next epoch allocates new ones
+                GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
             }
         }
 
@@ -129,6 +133,9 @@ namespace NeuralNetwork
                 {
                     Console.WriteLine($"Epoch {epoch + 1}/{epochs}, Loss: {epochLoss / (numSamples / batchSize)}");
                 }
+
+                // Hint GC at epoch boundary to reclaim batch temporaries
+                GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
             }
         }
 
@@ -405,15 +412,12 @@ namespace NeuralNetwork
             if (_disposed) return;
             _disposed = true;
 
-            // Dispose all child layers that implement IDisposable (e.g., CUDA layers)
+            // Dispose all child layers (Layer base class now implements IDisposable)
             if (layers != null)
             {
                 foreach (var layer in layers)
                 {
-                    if (layer is IDisposable disposable)
-                    {
-                        disposable.Dispose();
-                    }
+                    layer.Dispose();
                 }
             }
 

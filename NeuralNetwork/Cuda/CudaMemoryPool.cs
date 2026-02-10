@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using ManagedCuda;
 using ManagedCuda.BasicTypes;
 
@@ -12,7 +13,7 @@ namespace NeuralNetwork.Cuda
     ///
     /// Performance Impact: 2-4x speedup by eliminating per-operation allocations.
     /// </summary>
-    public class CudaMemoryPool : IDisposable
+    public class CudaMemoryPool : IDisposable, IAsyncDisposable
     {
         private readonly CudaContext _context;
         private readonly bool _contextOwned;
@@ -249,6 +250,20 @@ namespace NeuralNetwork.Cuda
             {
                 _context?.Dispose();
             }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    _context?.Synchronize();
+                }
+                catch { }
+            });
+
+            Dispose();
         }
     }
 

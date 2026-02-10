@@ -11,7 +11,7 @@ namespace NeuralNetwork.Layers.Cuda
     /// CUDA-accelerated Layer Normalization.
     /// Normalizes across the last dimension (features) for each sample.
     /// </summary>
-    public class LayerNormCuda : Layer, IDisposable
+    public class LayerNormCuda : Layer
     {
         private readonly int _normalizedShape;
         private readonly float _epsilon;
@@ -427,7 +427,7 @@ namespace NeuralNetwork.Layers.Cuda
             return inputShape;
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             _gammaDevice?.Dispose();
             _betaDevice?.Dispose();
@@ -440,6 +440,8 @@ namespace NeuralNetwork.Layers.Cuda
             {
                 _context?.Dispose();
             }
+
+            GC.SuppressFinalize(this);
         }
     }
 }

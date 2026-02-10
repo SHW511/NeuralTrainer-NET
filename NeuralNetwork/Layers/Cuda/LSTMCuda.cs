@@ -9,7 +9,7 @@ using ManagedCuda.VectorTypes;
 
 namespace NeuralNetwork.Layers.Cuda
 {
-    public class LSTMCuda : Layer, IDisposable
+    public class LSTMCuda : Layer
     {
         public int Units { get; private set; }
 
@@ -18,6 +18,7 @@ namespace NeuralNetwork.Layers.Cuda
         private float[] b;
 
         private CudaContext context;
+        private bool _contextOwned;
         private CudaDeviceVariable<float> wDevice;
         private CudaDeviceVariable<float> uDevice;
         private CudaDeviceVariable<float> bDevice;
@@ -26,13 +27,27 @@ namespace NeuralNetwork.Layers.Cuda
         // Cached linker image — JIT-compiled once in Build(), reused in every Call()
         private byte[] _cachedLinkerImage;
 
-        public LSTMCuda(int units)
+        // Cached kernels — loaded once, reused every call
+        private CudaKernel _forwardKernel;
+        private CudaKernel _backwardKernel;
+
+        public LSTMCuda(int units, CudaContext context = null)
         {
             Units = units;
             _w = new float[0, 0]; // Initialize to avoid non-nullable warnings
             _u = new float[0, 0]; // Initialize to avoid non-nullable warnings
             b = new float[0];    // Initialize to avoid non-nullable warnings
-            context = new CudaContext();
+
+            if (context != null)
+            {
+                this.context = context;
+                _contextOwned = false;
+            }
+            else
+            {
+                this.context = new CudaContext();
+                _contextOwned = true;
+            }
         }
 
         public override void Build(int[] inputShape)
@@ -74,6 +89,12 @@ namespace NeuralNetwork.Layers.Cuda
                 linker.Dispose();
             }
 
+            // Pre-load and cache kernels
+            _forwardKernel = context.LoadKernelPTX(_cachedLinkerImage, "lstm_forward");
+
+            var backwardPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "LSTMKernel.ptx");
+            _backwardKernel = context.LoadKernel(backwardPath, "LSTMBackward");
+
             Built = true;
         }
 
@@ -101,8 +122,8 @@ namespace NeuralNetwork.Layers.Cuda
             cDevice.CopyToDevice(c);
             h_tDevice.CopyToDevice(h_t);
 
-            // Use the cached linker image (JIT-compiled once in Build())
-            var kernel = context.LoadKernelPTX(_cachedLinkerImage, "lstm_forward");
+            // Use cached forward kernel
+            var kernel = _forwardKernel;
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(Units);
@@ -147,10 +168,8 @@ namespace NeuralNetwork.Layers.Cuda
             // Copy data to the GPU
             gradientDevice.CopyToDevice(gradient);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "LSTMKernel.ptx");
-
-            // Load the kernel from the .cu file
-            var kernel = context.LoadKernel(path, "LSTMBackward");
+            // Use cached backward kernel
+            var kernel = _backwardKernel;
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(128); //new dim3(Units);
@@ -192,7 +211,7 @@ namespace NeuralNetwork.Layers.Cuda
             throw new NotImplementedException();
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
@@ -200,7 +219,11 @@ namespace NeuralNetwork.Layers.Cuda
             wDevice?.Dispose();
             uDevice?.Dispose();
             bDevice?.Dispose();
-            context?.Dispose();
+
+            if (_contextOwned)
+            {
+                context?.Dispose();
+            }
 
             GC.SuppressFinalize(this);
         }

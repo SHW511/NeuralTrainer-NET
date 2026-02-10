@@ -9,19 +9,37 @@ using ManagedCuda.VectorTypes;
 
 namespace NeuralNetwork.Layers.Cuda
 {
-    public class EmbeddingCuda : Layer, IDisposable
+    public class EmbeddingCuda : Layer
     {
         private float[,] embeddings;
         private int[] inputIndices; // Store input indices for backpropagation
         private CudaContext context;
+        private bool _contextOwned;
         private CudaDeviceVariable<float> embeddingsDevice;
         private bool _disposed;
 
-        public EmbeddingCuda(int inputDim, int outputDim)
+        // Cached kernel path and kernels
+        private string _kernelPath;
+        private CudaKernel _lookupKernel;
+        private CudaKernel _backwardKernel;
+
+        public EmbeddingCuda(int inputDim, int outputDim, CudaContext context = null)
         {
             InputDim = inputDim;
             OutputDim = outputDim;
-            context = new CudaContext();
+
+            if (context != null)
+            {
+                this.context = context;
+                _contextOwned = false;
+            }
+            else
+            {
+                this.context = new CudaContext();
+                _contextOwned = true;
+            }
+
+            _kernelPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "EmbeddingKernel.ptx");
         }
 
         public override float[,] Backward(float[,] gradient)
@@ -35,17 +53,16 @@ namespace NeuralNetwork.Layers.Cuda
             gradientDevice.CopyToDevice(gradient);
             inputIndicesDevice.CopyToDevice(inputIndices);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "EmbeddingKernel.ptx");
-
-            // Load the kernel from the .ptx file
-            var kernel = context.LoadKernel(path, "EmbeddingBackward");
+            // Use cached backward kernel (falls back to loading if not yet cached)
+            if (_backwardKernel == null)
+                _backwardKernel = context.LoadKernel(_kernelPath, "EmbeddingBackward");
 
             dim3 blockSize = new dim3(sequenceLength);
             dim3 gridSize = new dim3(samples);
 
-            kernel.GridDimensions = gridSize;
-            kernel.BlockDimensions = blockSize;
-            kernel.Run(embeddingsDevice.DevicePointer, gradientDevice.DevicePointer, inputIndicesDevice.DevicePointer, samples, sequenceLength, InputDim, OutputDim, 0.01f); // Example learning rate
+            _backwardKernel.GridDimensions = gridSize;
+            _backwardKernel.BlockDimensions = blockSize;
+            _backwardKernel.Run(embeddingsDevice.DevicePointer, gradientDevice.DevicePointer, inputIndicesDevice.DevicePointer, samples, sequenceLength, InputDim, OutputDim, 0.01f); // Example learning rate
 
             float[,] embResult = new float[gradient.Length, inputIndices.Length];
             embeddingsDevice.CopyToHost(embResult);
@@ -63,6 +80,11 @@ namespace NeuralNetwork.Layers.Cuda
             embeddings = Initializers.Initializers.GlorotUniform(InputDim, OutputDim);
             embeddingsDevice = new CudaDeviceVariable<float>(embeddings.Length);
             embeddingsDevice.CopyToDevice(embeddings);
+
+            // Pre-load and cache kernels
+            _lookupKernel = context.LoadKernelPTX(_kernelPath, "EmbeddingLookup");
+            _backwardKernel = context.LoadKernel(_kernelPath, "EmbeddingBackward");
+
             Built = true;
         }
 
@@ -80,10 +102,8 @@ namespace NeuralNetwork.Layers.Cuda
             // Copy data to the GPU
             inputsDevice.CopyToDevice(inputs);
 
-            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CU", "EmbeddingKernel.ptx");
-
-            // Load the kernel from the .ptx file
-            var kernel = context.LoadKernelPTX(path, "EmbeddingLookup");
+            // Use cached kernel
+            var kernel = _lookupKernel;
 
             // Define block and grid sizes
             dim3 blockSize = new dim3(128); //dim3(sequenceLength);
@@ -110,13 +130,17 @@ namespace NeuralNetwork.Layers.Cuda
             return new int[] { inputShape[0], inputShape[1] * OutputDim };
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
 
             embeddingsDevice?.Dispose();
-            context?.Dispose();
+
+            if (_contextOwned)
+            {
+                context?.Dispose();
+            }
 
             GC.SuppressFinalize(this);
         }

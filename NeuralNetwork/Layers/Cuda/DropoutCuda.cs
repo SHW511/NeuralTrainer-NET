@@ -12,7 +12,7 @@ namespace NeuralNetwork.Layers.Cuda
     /// Performance: Keeps all data on GPU, ~1.2x faster than CPU dropout
     /// in the context of GPU training pipelines.
     /// </summary>
-    public class DropoutCuda : Layer, IDisposable
+    public class DropoutCuda : Layer
     {
         private readonly float _dropoutRate;
         private readonly float _keepProb;
@@ -257,9 +257,11 @@ namespace NeuralNetwork.Layers.Cuda
             throw new NotImplementedException();
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
             _maskDevice?.Dispose();
+
+            GC.SuppressFinalize(this);
         }
     }
 }
